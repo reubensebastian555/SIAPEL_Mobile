@@ -1,0 +1,77 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Professional Background Helper Badge (White Circle Container with subtle elevation style border) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,16 A38,38 0 1,1 53.99,16 Z" />
+
+    <path
+        android:strokeColor="#E6E6E6"
+        android:strokeWidth="1"
+        android:pathData="M54,16 A38,38 0 1,1 53.99,16 Z" />
+
+    <!-- Perfectly Centered and Padded Malang Kucecwara Emblem within the Safe Zone -->
+    <!-- Outer Pentagon (Red Fill) -->
+    <path
+        android:fillColor="#D32F2F"
+        android:pathData="M54,25 L80,44 L71,76 L37,76 L28,44 Z" />
+
+    <!-- Outer Pentagon Border (White Stroke) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M54,25 L80,44 L71,76 L37,76 L28,44 Z" />
+
+    <!-- Inner Pentagon (Green Fill) -->
+    <path
+        android:fillColor="#2E7D32"
+        android:pathData="M54,27.5 L77.5,44.5 L69,74 L39,74 L30.5,44.5 Z" />
+
+    <!-- Golden Star at Top Center -->
+    <path
+        android:fillColor="#FFD54F"
+        android:pathData="M54,31 L56.5,36 L62,36 L57.5,39.5 L59,45 L54,41.5 L49,45 L50.5,39.5 L46,36 L51.5,36 Z" />
+
+    <!-- Tugu / Monument Base and Pillar -->
+    <!-- Base steps -->
+    <path
+        android:fillColor="#0288D1"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.4"
+        android:pathData="M42,67 L66,67 L64,64 L44,64 Z" />
+    <path
+        android:fillColor="#0288D1"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.4"
+        android:pathData="M44,64 L64,64 L62,60 L46,60 Z" />
+    <!-- Main Pillar -->
+    <path
+        android:fillColor="#0288D1"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.4"
+        android:pathData="M49,60 L59,60 L57,45 L51,45 Z" />
+    <!-- Top Crown -->
+    <path
+        android:fillColor="#0288D1"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.4"
+        android:pathData="M50,45 L58,45 L54,41 Z" />
+
+    <!-- White Ribbon Banner at Bottom of Emblem -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#0B2D4D"
+        android:strokeWidth="0.8"
+        android:pathData="M35,72 L73,72 L70,66 L38,66 Z" />
+
+    <!-- Representation Line for Text inside Banner -->
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="1"
+        android:pathData="M42,69 L66,69" />
+
+</vector>
