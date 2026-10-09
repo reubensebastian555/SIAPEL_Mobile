@@ -49,6 +49,10 @@ fun HomeScreen(
     val activeApp by viewModel.activeApplication.collectAsState()
     val isDarkMode by profileViewModel.isDarkMode.collectAsState()
 
+    LaunchedEffect(Unit) {
+        viewModel.loadData()
+    }
+
     Scaffold(
         bottomBar = {
             SiapelBottomNavigation(navController = navController)

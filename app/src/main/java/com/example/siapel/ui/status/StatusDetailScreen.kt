@@ -1,13 +1,16 @@
 package com.example.siapel.ui.status
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -18,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,27 +44,59 @@ fun StatusDetailScreen(
 ) {
     val appState by viewModel.getApplicationByCodeFlow(code).collectAsState(initial = null)
     val app = appState
-    val scope = rememberCoroutineScope()
     var showDeleteDialog by remember { mutableStateOf(false) }
+    val isDeleting by viewModel.isDeleting.collectAsState()
+    val context = LocalContext.current
+    val documentViewLoading by viewModel.documentViewLoading.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.deleteResult.collect { success ->
+            if (success) {
+                onNavigateBack()
+            } else {
+                snackbarHostState.showSnackbar("Gagal menghapus pengajuan. Silakan coba lagi.")
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.openDocumentUrl.collect { url ->
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal membuka tautan dokumen: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.documentViewError.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     if (showDeleteDialog) {
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
+            onDismissRequest = { if (!isDeleting) showDeleteDialog = false },
             title = { Text("Hapus Pengajuan", color = MaterialTheme.colorScheme.onSurface) },
             text = { Text("Apakah Anda yakin ingin menghapus data pengajuan ini? Tindakan ini tidak dapat dibatalkan.", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             confirmButton = {
                 TextButton(
+                    enabled = !isDeleting,
                     onClick = {
-                        app?.let { viewModel.deleteApplication(it) }
                         showDeleteDialog = false
-                        onNavigateBack()
+                        app?.let { viewModel.deleteApplication(it) }
                     }
                 ) {
-                    Text("Hapus", color = MaterialTheme.colorScheme.error)
+                    Text(if (isDeleting) "Menghapus..." else "Hapus", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
+                TextButton(
+                    enabled = !isDeleting,
+                    onClick = { showDeleteDialog = false }
+                ) {
                     Text("Batal", color = MaterialTheme.colorScheme.primary)
                 }
             },
@@ -70,6 +106,7 @@ fun StatusDetailScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text("Detail Pengajuan", color = MaterialTheme.colorScheme.onSecondary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
@@ -101,107 +138,150 @@ fun StatusDetailScreen(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondary)
             )
         }
-    ) { paddingValues ->
+    ) { innerPadding ->
         if (app == null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues),
+                    .padding(innerPadding)
+                    .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center
             ) {
                 Text("Permohonan tidak ditemukan")
             }
         } else {
             val application = app
-            Column(
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues)
-                    .background(MaterialTheme.colorScheme.background)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(innerPadding)
+                    .background(MaterialTheme.colorScheme.background),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 16.dp,
+                    bottom = 32.dp
+                ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Info Card
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                    shape = RoundedCornerShape(14.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        DetailItem(label = "Kode Permohonan", value = application.submissionCode, isBold = true)
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                        DetailItem(label = "Jenis Layanan", value = application.serviceType)
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                        DetailItem(label = "Kategori", value = application.category)
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                        DetailItem(label = "Tanggal Pengajuan", value = application.submissionDate)
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Status Saat Ini", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-                            StatusChipDetail(status = application.status)
-                        }
-                    }
-                }
-
-                // Data Pelapor
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                    shape = RoundedCornerShape(14.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Data Pelapor", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                        DetailItem(label = "NIK Pelapor", value = application.nikPelapor)
-                        DetailItem(label = "Nama Pelapor", value = application.namaPelapor)
-                        DetailItem(label = "Email", value = application.email)
-                        DetailItem(label = "Nomor WhatsApp", value = application.whatsapp)
-                        DetailItem(label = "Kecamatan", value = application.kecamatan)
-                        DetailItem(label = "Kelurahan", value = application.kelurahan)
-                    }
-                }
-
-                // Documents Section (Read-Only Summary)
-                val requirements = getDocumentRequirements(application)
-                if (requirements.isNotEmpty()) {
+                item {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                         shape = RoundedCornerShape(14.dp),
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("Dokumen Terlampir", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                            DetailItem(label = "Kode Permohonan", value = application.submissionCode, isBold = true)
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                            val isDark = isSystemInDarkTheme()
-                            val successColor = if (isDark) SuccessDark else Success
-                            requirements.forEachIndexed { index, req ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = req.label,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 14.sp,
-                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
-                                    )
-                                    val statusText = if (req.isAttached) "Terlampir" else "Belum Dilampirkan"
-                                    val statusColor = if (req.isAttached) successColor else MaterialTheme.colorScheme.error
-                                    Text(
-                                        text = statusText,
-                                        color = statusColor,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                                if (index < requirements.lastIndex) {
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                            DetailItem(label = "Jenis Layanan", value = application.serviceType)
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                            DetailItem(label = "Kategori", value = application.category)
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                            DetailItem(label = "Tanggal Pengajuan", value = application.submissionDate)
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Status Saat Ini", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                                StatusChipDetail(status = application.status)
+                            }
+                        }
+                    }
+                }
+
+                // Data Pelapor
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                        shape = RoundedCornerShape(14.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Data Pelapor", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                            DetailItem(label = "NIK Pelapor", value = application.nikPelapor)
+                            DetailItem(label = "Nama Pelapor", value = application.namaPelapor)
+                            DetailItem(label = "Email", value = application.email)
+                            DetailItem(label = "Nomor WhatsApp", value = application.whatsapp)
+                            DetailItem(label = "Kecamatan", value = application.kecamatan)
+                            DetailItem(label = "Kelurahan", value = application.kelurahan)
+                        }
+                    }
+                }
+
+                // Documents Section (Read-Only Summary + Remote View Button)
+                val requirements = getDocumentRequirements(application)
+                if (requirements.isNotEmpty()) {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                            shape = RoundedCornerShape(14.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text("Dokumen Terlampir", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                                val isDark = isSystemInDarkTheme()
+                                val successColor = if (isDark) SuccessDark else Success
+                                requirements.forEachIndexed { index, req ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = req.label,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                        )
+                                        val statusText = if (req.isAttached) "Terlampir" else "Belum Dilampirkan"
+                                        val statusColor = if (req.isAttached) successColor else MaterialTheme.colorScheme.error
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = statusText,
+                                                color = statusColor,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            val slot = if (req.isAttached) getSlotForDocumentRequirement(application, index) else null
+                                            if (slot != null) {
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                IconButton(
+                                                    onClick = {
+                                                        viewModel.viewKiaDocument(
+                                                            submissionCode = application.submissionCode,
+                                                            documentSlot = slot
+                                                        )
+                                                    },
+                                                    enabled = !documentViewLoading,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    if (documentViewLoading) {
+                                                        CircularProgressIndicator(
+                                                            modifier = Modifier.size(16.dp),
+                                                            strokeWidth = 2.dp,
+                                                            color = MaterialTheme.colorScheme.primary
+                                                        )
+                                                    } else {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Visibility,
+                                                            contentDescription = "Lihat dokumen",
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (index < requirements.lastIndex) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                                    }
                                 }
                             }
                         }
@@ -210,90 +290,174 @@ fun StatusDetailScreen(
 
                 // Conditional Note
                 if (application.status == ApplicationStatus.NEED_REVISION && application.note != null) {
-                    val isDark = MaterialTheme.colorScheme.primary == Color(0xFF29A9E8)
-                    val warningColor = if (isDark) Color(0xFFFF6B6B) else MaterialTheme.colorScheme.error
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isDark) Color(0xFF2A171A) else Color(0xFFFFF1F1)
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            warningColor.copy(alpha = if (isDark) 0.4f else 0.3f)
-                        )
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Warning, contentDescription = null, tint = warningColor)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Perlu Perbaikan", color = warningColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(text = application.note ?: "", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar("Fitur perbaikan dokumen akan dikembangkan pada tahap berikutnya.")
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.error,
-                                    contentColor = Color.White
-                                ),
-                                shape = RoundedCornerShape(10.dp)
+                    item {
+                        val isDark = MaterialTheme.colorScheme.primary == Color(0xFF29A9E8)
+                        val warningColor = if (isDark) Color(0xFFFF6B6B) else MaterialTheme.colorScheme.error
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isDark) Color(0xFF2A171A) else Color(0xFFFFF1F1)
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                warningColor.copy(alpha = if (isDark) 0.4f else 0.3f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
                             ) {
-                                Text("Perbaiki Dokumen", fontWeight = FontWeight.Bold)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Warning, contentDescription = null, tint = warningColor, modifier = Modifier.size(28.dp))
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "Perlu Perbaikan",
+                                        color = warningColor,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(text = application.note ?: "", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Button(
+                                    onClick = {
+                                        val route = when (application.serviceType.uppercase()) {
+                                            "KIA" -> "kia?applicationId=${application.id}"
+                                            "KTP" -> "ktp?applicationId=${application.id}"
+                                            "KK" -> "kk?applicationId=${application.id}"
+                                            "AKTA" -> "akta?applicationId=${application.id}"
+                                            "DISABILITAS" -> "disabilitas?applicationId=${application.id}"
+                                            else -> null
+                                        }
+                                        route?.let { navController.navigate(it) }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("Perbaiki Dokumen", fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
                 }
 
                 if (application.status == ApplicationStatus.COMPLETED) {
-                    val isDark = isSystemInDarkTheme()
-                    val successColor = if (isDark) SuccessDark else Success
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = successColor.copy(alpha = 0.12f)
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, successColor.copy(alpha = 0.2f))
-                    ) {
-                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = successColor, modifier = Modifier.size(32.dp))
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text("Permohonan Selesai", color = successColor, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                Text("Permohonan Anda telah selesai diproses.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                    item {
+                        val isDark = isSystemInDarkTheme()
+                        val successColor = if (isDark) SuccessDark else Success
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = successColor.copy(alpha = 0.12f)
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, successColor.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = successColor,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Permohonan Selesai",
+                                        color = successColor,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Permohonan Anda telah selesai diproses.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 14.sp
+                                    )
+                                }
                             }
                         }
                     }
                 }
 
                 // Progress Timeline
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                    shape = RoundedCornerShape(14.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Timeline Progress", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
-                        Spacer(modifier = Modifier.height(16.dp))
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                        shape = RoundedCornerShape(14.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Timeline Progress", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                        val finalStageTitle = if (application.status == ApplicationStatus.NEED_REVISION) "Perlu Perbaikan" else "Selesai"
-                        val stages = listOf("Diajukan", "Sedang Diproses", finalStageTitle)
-                        stages.forEachIndexed { index, stage ->
-                            val state = getStageState(index, application.status)
-                            TimelineItem(
-                                title = stage,
-                                subtitle = getStageSubtitle(index, application.status),
-                                state = state,
-                                isLast = index == stages.lastIndex
-                            )
+                            val finalStageTitle = if (application.status == ApplicationStatus.NEED_REVISION) "Perlu Perbaikan" else "Selesai"
+                            val stages = listOf("Diajukan", "Sedang Diproses", finalStageTitle)
+                            stages.forEachIndexed { index, stage ->
+                                val state = getStageState(index, application.status)
+                                TimelineItem(
+                                    title = stage,
+                                    subtitle = getStageSubtitle(index, application.status),
+                                    state = state,
+                                    isLast = index == stages.lastIndex
+                                )
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+private fun isKiaPlusKk(category: String): Boolean {
+    val normalized = category
+        .uppercase()
+        .replace(" ", "")
+        .replace("&", "+")
+        .replace("DAN", "+")
+
+    return normalized.contains("KIA+KK")
+}
+
+fun getSlotForDocumentRequirement(application: ApplicationEntity, index: Int): String? {
+    val service = application.serviceType.uppercase()
+    val cat = application.category.uppercase()
+
+    if (service != "KIA") return null
+    if (isKiaPlusKk(cat)) return null
+
+    return when {
+        cat.contains("RUSAK") -> when (index) {
+            0 -> "doc1"
+            1 -> "doc2"
+            2 -> "docSelfie"
+            else -> null
+        }
+        cat.contains("HILANG") -> when (index) {
+            0 -> "doc1"
+            1 -> "doc2"
+            2 -> "docSelfie"
+            else -> null
+        }
+        else -> when (index) { // KIA BARU & KIA RUBAH
+            0 -> "doc1"
+            1 -> "doc2"
+            2 -> "doc3"
+            3 -> "docSelfie"
+            else -> null
         }
     }
 }
@@ -423,6 +587,7 @@ fun getDocumentRequirements(application: ApplicationEntity): List<DocumentRequir
     return when (service) {
         "KIA" -> {
             when {
+                isKiaPlusKk(cat) -> emptyList()
                 cat.contains("RUSAK") -> listOf(
                     DocumentRequirement("Upload Kartu Keluarga Terbaru", !application.doc1.isNullOrBlank()),
                     DocumentRequirement("Upload KIA Lama", !application.doc2.isNullOrBlank()),

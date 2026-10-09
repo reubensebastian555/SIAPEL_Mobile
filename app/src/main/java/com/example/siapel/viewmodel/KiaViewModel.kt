@@ -1,6 +1,8 @@
 package com.example.siapel.viewmodel
 
+import android.content.Context
 import android.net.Uri
+import android.util.Log
 import android.util.Patterns
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +23,23 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+
+private const val TAG = "SIAPEL_STORAGE"
+
+private fun isSelectedDocChanged(selected: SelectedDocument?, oldUriStr: String?): Boolean {
+    val newUriStr = selected?.uri?.toString()
+    return !newUriStr.isNullOrBlank() && newUriStr != oldUriStr
+}
+
+private fun isKiaPlusKk(category: String): Boolean {
+    val normalized = category
+        .uppercase()
+        .replace(" ", "")
+        .replace("&", "+")
+        .replace("DAN", "+")
+
+    return normalized.contains("KIA+KK")
+}
 
 class KiaViewModel(
     private val applicationRepository: ApplicationRepository,
@@ -238,7 +257,7 @@ class KiaViewModel(
                 namaPelaporError == null && nikAnakError == null && namaAnakError == null
     }
 
-    fun submitForm() {
+    fun submitForm(context: Context) {
         if (validate()) {
             _submitState.value = SubmitState.LOADING
             viewModelScope.launch {
@@ -255,6 +274,38 @@ class KiaViewModel(
                         }
 
                         val state = _uiState.value
+                        val isKiaPlusKkCategory = isKiaPlusKk(state.kategoriLayanan)
+                        val isRusakOrHilang = state.kategoriLayanan.contains("RUSAK", ignoreCase = true) || state.kategoriLayanan.contains("HILANG", ignoreCase = true)
+
+                        val doc1Candidate = if (isKiaPlusKkCategory) null else state.docKkTerbaru
+                        val doc2Candidate = when {
+                            isKiaPlusKkCategory -> null
+                            state.kategoriLayanan.contains("RUSAK", ignoreCase = true) -> state.docKiaLama
+                            state.kategoriLayanan.contains("HILANG", ignoreCase = true) -> state.docSuratKehilangan
+                            else -> state.docAktaLahirAnak
+                        }
+                        val doc3Candidate = if (isKiaPlusKkCategory || isRusakOrHilang) null else state.docPasFotoAnak
+                        val docSelfieCandidate = if (isKiaPlusKkCategory) null else state.docSelfie
+
+                        val doc1Changed = isSelectedDocChanged(doc1Candidate, existing.doc1)
+                        val doc2Changed = isSelectedDocChanged(doc2Candidate, existing.doc2)
+                        val doc3Changed = isSelectedDocChanged(doc3Candidate, existing.doc3)
+                        val docSelfieChanged = isSelectedDocChanged(docSelfieCandidate, existing.docSelfie)
+
+                        val doc1ForRemote = if (doc1Changed) doc1Candidate else null
+                        val doc2ForRemote = if (doc2Changed) doc2Candidate else null
+                        val doc3ForRemote = if (doc3Changed) doc3Candidate else null
+                        val docSelfieForRemote = if (docSelfieChanged) docSelfieCandidate else null
+
+                        Log.d("SIAPEL_EDIT_KIA", "edit submit start code=${existing.submissionCode}")
+                        Log.d("SIAPEL_EDIT_KIA", "category=${state.kategoriLayanan}")
+                        Log.d("SIAPEL_EDIT_KIA", "existing doc1 uri=${existing.doc1}")
+                        Log.d("SIAPEL_EDIT_KIA", "selected doc1 uri=${doc1Candidate?.uri}")
+                        Log.d("SIAPEL_EDIT_KIA", "doc1 changed=$doc1Changed")
+                        Log.d("SIAPEL_EDIT_KIA", "doc2 changed=$doc2Changed")
+                        Log.d("SIAPEL_EDIT_KIA", "doc3 changed=$doc3Changed")
+                        Log.d("SIAPEL_EDIT_KIA", "docSelfie changed=$docSelfieChanged")
+
                         val updatedApp = ApplicationEntity(
                             id = editId,
                             userId = originalUserId,
@@ -272,19 +323,48 @@ class KiaViewModel(
                             namaPelapor = state.namaPelapor,
                             nikAnak = state.nikAnak,
                             namaAnak = state.namaAnak,
-                            doc1 = state.docKkTerbaru?.uri?.toString(),
-                            doc2 = state.docAktaLahirAnak?.uri?.toString() ?: state.docKiaLama?.uri?.toString() ?: state.docSuratKehilangan?.uri?.toString(),
-                            doc3 = state.docPasFotoAnak?.uri?.toString(),
-                            docSelfie = state.docSelfie?.uri?.toString(),
+                            doc1 = if (isKiaPlusKkCategory) null else (if (doc1Changed) doc1Candidate?.uri?.toString() else existing.doc1),
+                            doc2 = if (isKiaPlusKkCategory) null else (if (doc2Changed) doc2Candidate?.uri?.toString() else existing.doc2),
+                            doc3 = if (isKiaPlusKkCategory || isRusakOrHilang) null else (if (doc3Changed) doc3Candidate?.uri?.toString() else existing.doc3),
+                            docSelfie = if (isKiaPlusKkCategory) null else (if (docSelfieChanged) docSelfieCandidate?.uri?.toString() else existing.docSelfie),
                             createdAt = originalCreatedAt
                         )
 
-                        applicationRepository.updateApplication(updatedApp)
-                        _submitState.value = SubmitState.SUCCESS
-                        delay(800)
-                        _submissionResult.emit(true)
+                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                        if (!currentUuid.isNullOrEmpty()) {
+                            val isRemoteUpdateSuccess = applicationRepository.updateKiaApplicationRemoteWithDocuments(
+                                context = context,
+                                application = updatedApp,
+                                currentUuid = currentUuid,
+                                newDoc1 = doc1ForRemote,
+                                newDoc2 = doc2ForRemote,
+                                newDoc3 = doc3ForRemote,
+                                newDocSelfie = docSelfieForRemote
+                            )
+                            if (isRemoteUpdateSuccess) {
+                                _submitState.value = SubmitState.SUCCESS
+                                delay(800)
+                                _submissionResult.emit(true)
+                            } else {
+                                Log.e("SIAPEL_EDIT_KIA", "KIA remote update failed for code ${updatedApp.submissionCode}. Room update skipped.")
+                                _submitState.value = SubmitState.ERROR
+                                delay(1000)
+                                _submitState.value = SubmitState.IDLE
+                                _submissionResult.emit(false)
+                            }
+                        } else {
+                            applicationRepository.updateApplication(updatedApp)
+                            _submitState.value = SubmitState.SUCCESS
+                            delay(800)
+                            _submissionResult.emit(true)
+                        }
                     } else {
                         val userSession = userPreferencesRepository.userSessionFlow.first()
+                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
                         if (userSession.isLoggedIn) {
                             val state = _uiState.value
                             val submissionCode = "KIA-${System.currentTimeMillis().toString().takeLast(6)}"
@@ -312,10 +392,46 @@ class KiaViewModel(
                                 docSelfie = state.docSelfie?.uri?.toString()
                             )
 
-                            applicationRepository.insertApplication(application)
-                            _submitState.value = SubmitState.SUCCESS
-                            delay(800)
-                            _submissionResult.emit(true)
+                            // Try remote CREATE KIA if authenticated on Supabase (applications + storage upload + kia_detail)
+                            if (!currentUuid.isNullOrEmpty()) {
+                                val isKiaPlusKkCategory = isKiaPlusKk(state.kategoriLayanan)
+                                val doc1 = if (isKiaPlusKkCategory) null else state.docKkTerbaru
+                                val doc2 = when {
+                                    isKiaPlusKkCategory -> null
+                                    state.kategoriLayanan.contains("RUSAK", ignoreCase = true) -> state.docKiaLama
+                                    state.kategoriLayanan.contains("HILANG", ignoreCase = true) -> state.docSuratKehilangan
+                                    else -> state.docAktaLahirAnak
+                                }
+                                val doc3 = if (isKiaPlusKkCategory || state.kategoriLayanan.contains("RUSAK", ignoreCase = true) || state.kategoriLayanan.contains("HILANG", ignoreCase = true)) null else state.docPasFotoAnak
+                                val docSelfie = if (isKiaPlusKkCategory) null else state.docSelfie
+
+                                val remoteSuccess = applicationRepository.createKiaApplicationRemote(
+                                    context = context,
+                                    application = application,
+                                    currentUuid = currentUuid,
+                                    doc1 = doc1,
+                                    doc2 = doc2,
+                                    doc3 = doc3,
+                                    docSelfie = docSelfie
+                                )
+
+                                if (remoteSuccess) {
+                                    _submitState.value = SubmitState.SUCCESS
+                                    delay(800)
+                                    _submissionResult.emit(true)
+                                } else {
+                                    Log.e(TAG, "KIA remote create failed. Local Room fallback skipped.")
+                                    _submitState.value = SubmitState.ERROR
+                                    delay(1000)
+                                    _submitState.value = SubmitState.IDLE
+                                    _submissionResult.emit(false)
+                                }
+                            } else {
+                                applicationRepository.insertApplication(application)
+                                _submitState.value = SubmitState.SUCCESS
+                                delay(800)
+                                _submissionResult.emit(true)
+                            }
                         } else {
                             _submitState.value = SubmitState.ERROR
                             delay(1000)
@@ -324,6 +440,7 @@ class KiaViewModel(
                         }
                     }
                 } catch (e: Exception) {
+                    Log.e(TAG, "submitForm exception: ${e.message}", e)
                     _submitState.value = SubmitState.ERROR
                     delay(1000)
                     _submitState.value = SubmitState.IDLE

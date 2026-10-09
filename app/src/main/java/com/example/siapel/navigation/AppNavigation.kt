@@ -5,6 +5,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -27,6 +29,7 @@ import com.example.siapel.SiapelApplication
 import com.example.siapel.ui.akta.AktaKelahiranFormScreen
 import com.example.siapel.ui.disabilitas.DisabilitasFormScreen
 import com.example.siapel.ui.home.AllServicesScreen
+import com.example.siapel.ui.status.StatusDetailScreen
 import com.example.siapel.viewmodel.AktaKelahiranViewModel
 import com.example.siapel.viewmodel.ViewModelFactory
 import com.example.siapel.viewmodel.AuthViewModel
@@ -61,10 +64,19 @@ fun AppNavigation(
         startDestination = Screen.Splash.route
     ) {
         composable(Screen.Splash.route) {
+            val scope = rememberCoroutineScope()
             SplashScreen(
                 onTimeout = {
-                    navController.navigate(Screen.Login.route) {
-                        popUpTo(Screen.Splash.route) { inclusive = true }
+                    scope.launch {
+                        val isSessionValid = application.authRepository.validateSessionWithServer()
+                        val targetScreen = if (isSessionValid) {
+                            Screen.Home.route
+                        } else {
+                            Screen.Login.route
+                        }
+                        navController.navigate(targetScreen) {
+                            popUpTo(Screen.Splash.route) { inclusive = true }
+                        }
                     }
                 }
             )
@@ -131,24 +143,19 @@ fun AppNavigation(
 
         composable(
             route = "status_detail/{code}",
-            arguments = listOf(androidx.navigation.navArgument("code") { type = androidx.navigation.NavType.StringType })
+            arguments = listOf(navArgument("code") { type = NavType.StringType })
         ) { backStackEntry ->
             val code = backStackEntry.arguments?.getString("code") ?: ""
             val statusViewModel: StatusViewModel = viewModel(factory = factory)
             val snackbarHostState = remember { SnackbarHostState() }
-            Scaffold(
-                snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
-            ) { paddingValues ->
-                Box(modifier = Modifier.padding(paddingValues)) {
-                    com.example.siapel.ui.status.StatusDetailScreen(
-                        code = code,
-                        viewModel = statusViewModel,
-                        onNavigateBack = { navController.popBackStack() },
-                        snackbarHostState = snackbarHostState,
-                        navController = navController
-                    )
-                }
-            }
+
+            StatusDetailScreen(
+                code = code,
+                viewModel = statusViewModel,
+                onNavigateBack = { navController.popBackStack() },
+                snackbarHostState = snackbarHostState,
+                navController = navController
+            )
         }
 
         composable(Screen.Profile.route) {

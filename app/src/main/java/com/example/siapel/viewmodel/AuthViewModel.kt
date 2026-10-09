@@ -186,9 +186,9 @@ class AuthViewModel(
                 whatsapp = state.nomorWhatsapp,
                 kecamatan = state.kecamatan,
                 kelurahan = state.kelurahan,
-                passwordHash = authRepository.hashPassword(state.password)
+                passwordHash = "SUPABASE_AUTH"
             )
-            authRepository.register(user)
+            authRepository.register(user, state.password)
                 .onSuccess {
                     _isLoading.value = false
                     _registerState.value = RegisterFormState()

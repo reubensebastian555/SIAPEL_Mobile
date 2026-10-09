@@ -55,8 +55,13 @@ fun ProfileScreen(
     onLogout: () -> Unit
 ) {
     val user by viewModel.userProfile.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
     val isDarkMode by viewModel.isDarkMode.collectAsState()
     var showLogoutDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadUserProfile()
+    }
 
     if (showLogoutDialog) {
         AlertDialog(
@@ -96,7 +101,16 @@ fun ProfileScreen(
                 user?.let { ProfileHeader(it) } ?: Box(
                     modifier = Modifier.fillMaxWidth().height(200.dp),
                     contentAlignment = Alignment.Center
-                ) { CircularProgressIndicator() }
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator()
+                    } else {
+                        Text(
+                            text = "Profil tidak ditemukan",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
             item { Spacer(modifier = Modifier.height(24.dp)) }
             item { user?.let { UserInfoCard(it) } }

@@ -23,7 +23,7 @@ class ViewModelFactory(
                 ProfileViewModel(authRepository!!, userPreferencesRepository!!) as T
             }
             modelClass.isAssignableFrom(StatusViewModel::class.java) -> {
-                StatusViewModel(applicationRepository!!, userPreferencesRepository!!) as T
+                StatusViewModel(applicationRepository!!, userPreferencesRepository!!, authRepository!!) as T
             }
             modelClass.isAssignableFrom(KiaViewModel::class.java) -> {
                 KiaViewModel(applicationRepository!!, userPreferencesRepository!!, authRepository!!) as T

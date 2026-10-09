@@ -1,8 +1,11 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.kapt)
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.0.21"
 }
 
 android {
@@ -17,6 +20,23 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        val localProperties = Properties()
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.exists()) {
+            localPropertiesFile.inputStream().use { stream -> localProperties.load(stream) }
+        }
+
+        val supabaseUrl = localProperties.getProperty("SUPABASE_URL")
+            ?: project.findProperty("SUPABASE_URL") as? String
+            ?: throw GradleException("SUPABASE_URL tidak ditemukan di local.properties atau gradle properties. Harap tambahkan SUPABASE_URL di local.properties.")
+
+        val supabasePublishableKey = localProperties.getProperty("SUPABASE_PUBLISHABLE_KEY")
+            ?: project.findProperty("SUPABASE_PUBLISHABLE_KEY") as? String
+            ?: throw GradleException("SUPABASE_PUBLISHABLE_KEY tidak ditemukan di local.properties atau gradle properties. Harap tambahkan SUPABASE_PUBLISHABLE_KEY di local.properties.")
+
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabasePublishableKey\"")
     }
 
     buildTypes {
@@ -37,6 +57,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -60,6 +81,13 @@ dependencies {
     
     // DataStore
     implementation(libs.androidx.datastore.preferences)
+
+    // Supabase Auth, Postgrest, Storage & Ktor Engine
+    implementation(platform(libs.supabase.bom))
+    implementation(libs.supabase.auth)
+    implementation(libs.supabase.postgrest)
+    implementation(libs.supabase.storage)
+    implementation(libs.ktor.client.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

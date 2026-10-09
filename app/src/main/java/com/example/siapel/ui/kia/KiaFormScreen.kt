@@ -17,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -337,11 +338,12 @@ fun KiaFormScreen(
             }
 
             item {
+                val context = LocalContext.current
                 Spacer(modifier = Modifier.height(8.dp))
                 SiapelPrimaryButton(
                     text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
                     onClick = {
-                        viewModel.submitForm()
+                        viewModel.submitForm(context)
                     },
                     submitState = submitState,
                     loadingText = if (isEditMode) "Menyimpan perubahan" else "Mengirim pengajuan",

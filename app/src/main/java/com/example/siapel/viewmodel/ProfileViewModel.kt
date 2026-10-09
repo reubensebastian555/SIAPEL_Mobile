@@ -8,7 +8,6 @@ import com.example.siapel.model.UserProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class ProfileViewModel(
@@ -19,6 +18,9 @@ class ProfileViewModel(
     private val _userProfile = MutableStateFlow<UserProfile?>(null)
     val userProfile: StateFlow<UserProfile?> = _userProfile.asStateFlow()
 
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
     private val _isDarkMode = MutableStateFlow(false)
     val isDarkMode: StateFlow<Boolean> = _isDarkMode.asStateFlow()
 
@@ -26,22 +28,38 @@ class ProfileViewModel(
         loadUserProfile()
     }
 
-    private fun loadUserProfile() {
+    fun loadUserProfile() {
         viewModelScope.launch {
-            userPreferencesRepository.userSessionFlow.collectLatest { session ->
-                if (session.isLoggedIn) {
-                    val user = authRepository.getUserById(session.userId)
-                    user?.let {
-                        _userProfile.value = UserProfile(
-                            name = it.namaLengkap,
-                            nik = it.nik,
-                            email = it.email,
-                            whatsapp = it.whatsapp,
-                            kecamatan = it.kecamatan,
-                            kelurahan = it.kelurahan
-                        )
-                    }
+            _isLoading.value = true
+            try {
+                if (authRepository.isUserLoggedIn()) {
+                    val profile = authRepository.getUserProfile()
+                    _userProfile.value = profile ?: UserProfile(
+                        name = authRepository.getSupabaseFullName() ?: "Pengguna Tidak Diketahui",
+                        nik = "",
+                        email = authRepository.getCurrentUserEmail() ?: "",
+                        whatsapp = "",
+                        kecamatan = "",
+                        kelurahan = ""
+                    )
+                } else {
+                    _userProfile.value = null
                 }
+            } catch (e: Exception) {
+                if (authRepository.isUserLoggedIn()) {
+                    _userProfile.value = UserProfile(
+                        name = authRepository.getSupabaseFullName() ?: "Pengguna Tidak Diketahui",
+                        nik = "",
+                        email = authRepository.getCurrentUserEmail() ?: "",
+                        whatsapp = "",
+                        kecamatan = "",
+                        kelurahan = ""
+                    )
+                } else {
+                    _userProfile.value = null
+                }
+            } finally {
+                _isLoading.value = false
             }
         }
     }
@@ -52,6 +70,7 @@ class ProfileViewModel(
 
     fun logout(onSuccess: () -> Unit) {
         viewModelScope.launch {
+            authRepository.logout()
             userPreferencesRepository.clearSession()
             onSuccess()
         }

@@ -8,8 +8,10 @@ lifecycleRuntimeKtx = "2.8.7"
 activityCompose = "1.9.3"
 kotlin = "2.0.21"
 composeBom = "2024.12.01"
-room = "2.6.1"
+room = "2.7.0-alpha13"
 datastore = "1.1.1"
+supabase = "3.0.3"
+ktor = "3.0.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +39,13 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 
 # DataStore
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+
+# Supabase & Ktor
+supabase-bom = { group = "io.github.jan-tennert.supabase", name = "bom", version.ref = "supabase" }
+supabase-auth = { group = "io.github.jan-tennert.supabase", name = "auth-kt" }
+supabase-postgrest = { group = "io.github.jan-tennert.supabase", name = "postgrest-kt" }
+supabase-storage = { group = "io.github.jan-tennert.supabase", name = "storage-kt" }
+ktor-client-android = { group = "io.ktor", name = "ktor-client-android", version.ref = "ktor" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

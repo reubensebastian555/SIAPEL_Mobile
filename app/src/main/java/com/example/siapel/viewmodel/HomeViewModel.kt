@@ -28,7 +28,7 @@ class HomeViewModel(
     private val userPreferencesRepository: UserPreferencesRepository
 ) : ViewModel() {
     
-    private val _userName = MutableStateFlow("Pengguna")
+    private val _userName = MutableStateFlow("")
     val userName: StateFlow<String> = _userName.asStateFlow()
 
     private val _activeApplication = MutableStateFlow<ActiveApplication?>(null)
@@ -49,15 +49,16 @@ class HomeViewModel(
         loadData()
     }
 
-    private fun loadData() {
+    fun loadData() {
         viewModelScope.launch {
-            userPreferencesRepository.userSessionFlow.collectLatest { session ->
-                if (session.isLoggedIn) {
-                    val user = authRepository.getUserById(session.userId)
-                    _userName.value = user?.namaLengkap ?: "Pengguna"
-                    
-                    // Fetch latest active application
-                    applicationRepository.getApplicationsByUser(session.userId).collectLatest { apps ->
+            if (authRepository.isUserLoggedIn()) {
+                val profile = authRepository.getUserProfile()
+                _userName.value = profile?.name ?: "Pengguna Tidak Diketahui"
+
+                val user = authRepository.getAuthenticatedUser()
+                val userId = user?.id ?: -1
+                if (userId != -1) {
+                    applicationRepository.getApplicationsByUser(userId).collectLatest { apps ->
                         if (apps.isNotEmpty()) {
                             val latest = apps.first()
                             _activeApplication.value = ActiveApplication(
@@ -76,6 +77,9 @@ class HomeViewModel(
                         }
                     }
                 }
+            } else {
+                _userName.value = "Pengguna Tidak Diketahui"
+                _activeApplication.value = null
             }
         }
     }
