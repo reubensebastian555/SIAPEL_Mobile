@@ -1,6 +1,8 @@
 package com.example.siapel.viewmodel
 
+import android.content.Context
 import android.net.Uri
+import android.util.Log
 import android.util.Patterns
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +23,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+
+private fun isSelectedDocChanged(selected: SelectedDocument?, oldUriStr: String?): Boolean {
+    val newUriStr = selected?.uri?.toString()
+    return !newUriStr.isNullOrBlank() && newUriStr != oldUriStr
+}
 
 class KtpViewModel(
     private val applicationRepository: ApplicationRepository,
@@ -203,7 +210,7 @@ class KtpViewModel(
                 nikPelaporError == null
     }
 
-    fun submitForm() {
+    fun submitForm(context: Context) {
         if (validate()) {
             _submitState.value = SubmitState.LOADING
             viewModelScope.launch {
@@ -220,6 +227,29 @@ class KtpViewModel(
                         }
 
                         val state = _uiState.value
+                        val cat = state.kategoriLayanan.uppercase()
+                        val isPerekaman = cat.contains("PEREKAMAN")
+
+                        val doc1Candidate = state.docKkTerbaru
+                        val doc2Candidate = when {
+                            isPerekaman -> null
+                            cat.contains("HILANG") -> state.docSuratKeteranganHilang
+                            else -> state.docKtpLama
+                        }
+                        val docSelfieCandidate = state.docSelfie
+
+                        val doc1Changed = isSelectedDocChanged(doc1Candidate, existing.doc1)
+                        val doc2Changed = !isPerekaman && isSelectedDocChanged(doc2Candidate, existing.doc2)
+                        val docSelfieChanged = isSelectedDocChanged(docSelfieCandidate, existing.docSelfie)
+
+                        val doc1ForRemote = if (doc1Changed) doc1Candidate else null
+                        val doc2ForRemote = if (doc2Changed) doc2Candidate else null
+                        val docSelfieForRemote = if (docSelfieChanged) docSelfieCandidate else null
+
+                        Log.d("SIAPEL_EDIT_KTP", "KTP edit submit start code=${existing.submissionCode}")
+                        Log.d("SIAPEL_EDIT_KTP", "category=${state.kategoriLayanan}")
+                        Log.d("SIAPEL_EDIT_KTP", "doc1 changed=$doc1Changed, doc2 changed=$doc2Changed, docSelfie changed=$docSelfieChanged")
+
                         val updatedApp = ApplicationEntity(
                             id = editId,
                             userId = originalUserId,
@@ -235,18 +265,46 @@ class KtpViewModel(
                             keterangan = state.keterangan,
                             nikPelapor = state.nikPelapor,
                             namaPelapor = state.namaPelapor,
-                            doc1 = state.docKkTerbaru?.uri?.toString(),
-                            doc2 = state.docKtpLama?.uri?.toString() ?: state.docSuratKeteranganHilang?.uri?.toString(),
-                            docSelfie = state.docSelfie?.uri?.toString(),
+                            doc1 = if (doc1Changed) doc1Candidate?.uri?.toString() else existing.doc1,
+                            doc2 = if (isPerekaman) null else (if (doc2Changed) doc2Candidate?.uri?.toString() else existing.doc2),
+                            docSelfie = if (docSelfieChanged) docSelfieCandidate?.uri?.toString() else existing.docSelfie,
                             createdAt = originalCreatedAt
                         )
 
-                        applicationRepository.updateApplication(updatedApp)
-                        _submitState.value = SubmitState.SUCCESS
-                        delay(800)
-                        _submissionResult.emit(true)
+                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                        if (!currentUuid.isNullOrEmpty()) {
+                            val isRemoteUpdateSuccess = applicationRepository.updateKtpApplicationRemoteWithDocuments(
+                                context = context,
+                                application = updatedApp,
+                                currentUuid = currentUuid,
+                                newDoc1 = doc1ForRemote,
+                                newDoc2 = doc2ForRemote,
+                                newDocSelfie = docSelfieForRemote
+                            )
+                            if (isRemoteUpdateSuccess) {
+                                _submitState.value = SubmitState.SUCCESS
+                                delay(800)
+                                _submissionResult.emit(true)
+                            } else {
+                                Log.e("SIAPEL_EDIT_KTP", "KTP remote update failed for code ${updatedApp.submissionCode}. Room update skipped.")
+                                _submitState.value = SubmitState.ERROR
+                                delay(1000)
+                                _submitState.value = SubmitState.IDLE
+                                _submissionResult.emit(false)
+                            }
+                        } else {
+                            applicationRepository.updateApplication(updatedApp)
+                            _submitState.value = SubmitState.SUCCESS
+                            delay(800)
+                            _submissionResult.emit(true)
+                        }
                     } else {
                         val userSession = userPreferencesRepository.userSessionFlow.first()
+                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
                         if (userSession.isLoggedIn) {
                             val state = _uiState.value
                             val submissionCode = "KTP-${System.currentTimeMillis().toString().takeLast(6)}"
@@ -271,10 +329,42 @@ class KtpViewModel(
                                 docSelfie = state.docSelfie?.uri?.toString()
                             )
 
-                            applicationRepository.insertApplication(application)
-                            _submitState.value = SubmitState.SUCCESS
-                            delay(800)
-                            _submissionResult.emit(true)
+                            if (!currentUuid.isNullOrEmpty()) {
+                                val cat = state.kategoriLayanan.uppercase()
+                                val doc1 = state.docKkTerbaru
+                                val doc2 = when {
+                                    cat.contains("PEREKAMAN") -> null
+                                    cat.contains("HILANG") -> state.docSuratKeteranganHilang
+                                    else -> state.docKtpLama
+                                }
+                                val docSelfie = state.docSelfie
+
+                                val remoteSuccess = applicationRepository.createKtpApplicationRemote(
+                                    context = context,
+                                    application = application,
+                                    currentSupabaseUuid = currentUuid,
+                                    doc1 = doc1,
+                                    doc2 = doc2,
+                                    docSelfie = docSelfie
+                                )
+
+                                if (remoteSuccess) {
+                                    _submitState.value = SubmitState.SUCCESS
+                                    delay(800)
+                                    _submissionResult.emit(true)
+                                } else {
+                                    Log.e("SIAPEL_STORAGE", "KTP remote create failed. Local Room fallback skipped.")
+                                    _submitState.value = SubmitState.ERROR
+                                    delay(1000)
+                                    _submitState.value = SubmitState.IDLE
+                                    _submissionResult.emit(false)
+                                }
+                            } else {
+                                applicationRepository.insertApplication(application)
+                                _submitState.value = SubmitState.SUCCESS
+                                delay(800)
+                                _submissionResult.emit(true)
+                            }
                         } else {
                             _submitState.value = SubmitState.ERROR
                             delay(1000)
@@ -283,6 +373,7 @@ class KtpViewModel(
                         }
                     }
                 } catch (e: Exception) {
+                    Log.e("SIAPEL_STORAGE", "KTP submitForm exception: ${e.message}", e)
                     _submitState.value = SubmitState.ERROR
                     delay(1000)
                     _submitState.value = SubmitState.IDLE

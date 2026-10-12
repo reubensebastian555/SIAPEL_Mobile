@@ -253,10 +253,17 @@ fun StatusDetailScreen(
                                                 Spacer(modifier = Modifier.width(4.dp))
                                                 IconButton(
                                                     onClick = {
-                                                        viewModel.viewKiaDocument(
-                                                            submissionCode = application.submissionCode,
-                                                            documentSlot = slot
-                                                        )
+                                                        if (application.serviceType.equals("KTP", ignoreCase = true)) {
+                                                            viewModel.viewKtpDocument(
+                                                                submissionCode = application.submissionCode,
+                                                                documentSlot = slot
+                                                            )
+                                                        } else {
+                                                            viewModel.viewKiaDocument(
+                                                                submissionCode = application.submissionCode,
+                                                                documentSlot = slot
+                                                            )
+                                                        }
                                                     },
                                                     enabled = !documentViewLoading,
                                                     modifier = Modifier.size(36.dp)
@@ -405,13 +412,15 @@ fun StatusDetailScreen(
 
                             val finalStageTitle = if (application.status == ApplicationStatus.NEED_REVISION) "Perlu Perbaikan" else "Selesai"
                             val stages = listOf("Diajukan", "Sedang Diproses", finalStageTitle)
+                            val activeColor = if (application.status == ApplicationStatus.PROCESSING) Color(0xFFFFA000) else MaterialTheme.colorScheme.primary
                             stages.forEachIndexed { index, stage ->
                                 val state = getStageState(index, application.status)
                                 TimelineItem(
                                     title = stage,
                                     subtitle = getStageSubtitle(index, application.status),
                                     state = state,
-                                    isLast = index == stages.lastIndex
+                                    isLast = index == stages.lastIndex,
+                                    activeColor = activeColor
                                 )
                             }
                         }
@@ -436,29 +445,59 @@ fun getSlotForDocumentRequirement(application: ApplicationEntity, index: Int): S
     val service = application.serviceType.uppercase()
     val cat = application.category.uppercase()
 
-    if (service != "KIA") return null
-    if (isKiaPlusKk(cat)) return null
-
-    return when {
-        cat.contains("RUSAK") -> when (index) {
-            0 -> "doc1"
-            1 -> "doc2"
-            2 -> "docSelfie"
-            else -> null
+    return when (service) {
+        "KIA" -> {
+            if (isKiaPlusKk(cat)) return null
+            when {
+                cat.contains("RUSAK") -> when (index) {
+                    0 -> "doc1"
+                    1 -> "doc2"
+                    2 -> "docSelfie"
+                    else -> null
+                }
+                cat.contains("HILANG") -> when (index) {
+                    0 -> "doc1"
+                    1 -> "doc2"
+                    2 -> "docSelfie"
+                    else -> null
+                }
+                else -> when (index) { // KIA BARU & KIA RUBAH
+                    0 -> "doc1"
+                    1 -> "doc2"
+                    2 -> "doc3"
+                    3 -> "docSelfie"
+                    else -> null
+                }
+            }
         }
-        cat.contains("HILANG") -> when (index) {
-            0 -> "doc1"
-            1 -> "doc2"
-            2 -> "docSelfie"
-            else -> null
+        "KTP" -> {
+            when {
+                cat.contains("RUSAK") || cat.contains("RUBAH") -> when (index) {
+                    0 -> "doc1"
+                    1 -> "doc2"
+                    2 -> "docSelfie"
+                    else -> null
+                }
+                cat.contains("HILANG") -> when (index) {
+                    0 -> "doc1"
+                    1 -> "doc2"
+                    2 -> "docSelfie"
+                    else -> null
+                }
+                cat.contains("PEREKAMAN") -> when (index) {
+                    0 -> "doc1"
+                    1 -> "docSelfie"
+                    else -> null
+                }
+                else -> when (index) {
+                    0 -> "doc1"
+                    1 -> "doc2"
+                    2 -> "docSelfie"
+                    else -> null
+                }
+            }
         }
-        else -> when (index) { // KIA BARU & KIA RUBAH
-            0 -> "doc1"
-            1 -> "doc2"
-            2 -> "doc3"
-            3 -> "docSelfie"
-            else -> null
-        }
+        else -> null
     }
 }
 
@@ -533,13 +572,19 @@ fun getStageSubtitle(index: Int, status: ApplicationStatus): String? {
 }
 
 @Composable
-fun TimelineItem(title: String, subtitle: String?, state: TimelineState, isLast: Boolean) {
+fun TimelineItem(
+    title: String,
+    subtitle: String?,
+    state: TimelineState,
+    isLast: Boolean,
+    activeColor: Color = MaterialTheme.colorScheme.primary
+) {
     val isDark = isSystemInDarkTheme()
     Row(modifier = Modifier.fillMaxWidth()) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             val color = when (state) {
                 TimelineState.COMPLETED -> if (isDark) SuccessDark else Color(0xFF4CAF50)
-                TimelineState.ACTIVE -> MaterialTheme.colorScheme.primary
+                TimelineState.ACTIVE -> activeColor
                 TimelineState.INACTIVE -> MaterialTheme.colorScheme.outline
                 TimelineState.ERROR -> MaterialTheme.colorScheme.error
             }
