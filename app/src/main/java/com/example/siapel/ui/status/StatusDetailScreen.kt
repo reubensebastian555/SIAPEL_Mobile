@@ -253,7 +253,12 @@ fun StatusDetailScreen(
                                                 Spacer(modifier = Modifier.width(4.dp))
                                                 IconButton(
                                                     onClick = {
-                                                        if (application.serviceType.equals("KTP", ignoreCase = true)) {
+                                                        if (application.serviceType.equals("KK", ignoreCase = true)) {
+                                                            viewModel.viewKkDocument(
+                                                                submissionCode = application.submissionCode,
+                                                                documentSlot = slot
+                                                            )
+                                                        } else if (application.serviceType.equals("KTP", ignoreCase = true)) {
                                                             viewModel.viewKtpDocument(
                                                                 submissionCode = application.submissionCode,
                                                                 documentSlot = slot
@@ -496,6 +501,25 @@ fun getSlotForDocumentRequirement(application: ApplicationEntity, index: Int): S
                     else -> null
                 }
             }
+        }
+        "KK" -> {
+            val reqs = getDocumentRequirements(application)
+            if (index in reqs.indices) {
+                when (reqs[index].label) {
+                    "Kartu Keluarga Terbaru" -> "doc1"
+                    "F1-01" -> "doc2"
+                    "F1-02" -> "doc3"
+                    "F1-03" -> "doc4"
+                    "F1-06" -> "doc5"
+                    "SPTJM Pendaftaran Penduduk" -> "doc6"
+                    "Surat Pernyataan Tempat Tinggal" -> "doc7"
+                    "Surat Keterangan Hilang / KK Rusak" -> "doc8"
+                    "KTP Hilang / Rusak" -> "doc9"
+                    "Dokumen Pendukung" -> "doc10"
+                    "Foto Selfie" -> "docSelfie"
+                    else -> null
+                }
+            } else null
         }
         else -> null
     }

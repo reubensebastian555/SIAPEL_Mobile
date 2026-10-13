@@ -8,8 +8,10 @@ import com.example.siapel.data.remote.SupabaseClientProvider
 import com.example.siapel.data.remote.dto.ApplicationRemoteDto
 import com.example.siapel.data.remote.dto.ApplicationWithKiaDetailRemoteDto
 import com.example.siapel.data.remote.dto.ApplicationWithKtpDetailRemoteDto
+import com.example.siapel.data.remote.dto.ApplicationWithKkDetailRemoteDto
 import com.example.siapel.data.remote.dto.KiaDetailRemoteDto
 import com.example.siapel.data.remote.dto.KtpDetailRemoteDto
+import com.example.siapel.data.remote.dto.KkDetailRemoteDto
 import com.example.siapel.model.ApplicationStatus
 import com.example.siapel.model.SelectedDocument
 import io.github.jan.supabase.exceptions.RestException
@@ -194,6 +196,102 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
 
         Log.d(storageTag, "slot: $documentSlot, file size: $rawSize bytes, mime/extension: $rawMime / $extension")
+
+        val fileBytes = try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                stream.readBytes()
+            }
+        } catch (e: Exception) {
+            Log.e(storageTag, "upload failed: unable to read Uri stream (${e.message})")
+            null
+        }
+
+        if (fileBytes == null || fileBytes.isEmpty()) {
+            Log.e(storageTag, "upload failed: file content is empty or unreadable")
+            return Result.failure(Exception("Gagal membaca berkas file."))
+        }
+
+        if (fileBytes.size > maxSizeBytes) {
+            Log.e(storageTag, "upload failed: read file size exceeds limit (${fileBytes.size} > $maxSizeBytes bytes)")
+            return Result.failure(Exception(sizeErrorMessage))
+        }
+
+        val targetPath = "$currentUuid/$submissionCode/${documentSlot}_${System.currentTimeMillis()}.$extension"
+        Log.d(storageTag, "target path: $targetPath")
+
+        return try {
+            val bucket = storage.from("siapel-documents")
+            bucket.upload(targetPath, fileBytes) {
+                upsert = false
+            }
+            Log.d(storageTag, "upload success for target path: $targetPath")
+            Result.success(targetPath)
+        } catch (e: Exception) {
+            Log.e(storageTag, "upload failed for target path $targetPath: ${e.message}", e)
+            Result.failure(Exception("Gagal mengunggah dokumen ke penyimpanan cloud: ${e.message}"))
+        }
+    }
+
+    private suspend fun uploadKkDocumentRemote(
+        context: Context,
+        selectedDocument: SelectedDocument,
+        currentUuid: String,
+        submissionCode: String,
+        documentSlot: String
+    ): Result<String> {
+        val storageTag = "SIAPEL_STORAGE"
+        Log.d(storageTag, "KK upload start for slot $documentSlot, submissionCode $submissionCode")
+
+        val validSlots = listOf(
+            "doc1", "doc2", "doc3", "doc4", "doc5",
+            "doc6", "doc7", "doc8", "doc9", "doc10", "docSelfie"
+        )
+        if (!validSlots.contains(documentSlot)) {
+            Log.e(storageTag, "upload failed: invalid KK slot $documentSlot")
+            return Result.failure(Exception("Slot dokumen KK tidak valid."))
+        }
+
+        val uri = selectedDocument.uri
+        if (uri == null) {
+            Log.e(storageTag, "upload failed: URI is null")
+            return Result.failure(Exception("File dokumen tidak ditemukan (URI null)."))
+        }
+
+        val displayName = selectedDocument.displayName
+        val rawMime = selectedDocument.mimeType
+
+        val extension = when {
+            rawMime?.contains("jpeg", true) == true || rawMime?.contains("jpg", true) == true -> "jpg"
+            rawMime?.contains("png", true) == true -> "png"
+            rawMime?.contains("pdf", true) == true -> "pdf"
+            rawMime?.contains("msword", true) == true -> "doc"
+            rawMime?.contains("wordprocessingml", true) == true -> "docx"
+            else -> displayName.substringAfterLast('.', "").lowercase()
+        }
+
+        val imageExtensions = listOf("jpg", "jpeg", "png")
+        val documentExtensions = listOf("pdf", "doc", "docx")
+
+        val maxSizeBytes = when {
+            imageExtensions.contains(extension) -> 5 * 1024 * 1024L
+            documentExtensions.contains(extension) -> 10 * 1024 * 1024L
+            else -> {
+                Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
+                return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
+            }
+        }
+
+        val sizeErrorMessage = if (imageExtensions.contains(extension)) {
+            "Ukuran gambar melebihi batas maksimal 5 MB."
+        } else {
+            "Ukuran dokumen melebihi batas maksimal 10 MB."
+        }
+
+        val rawSize = selectedDocument.fileSize
+        if (rawSize > maxSizeBytes) {
+            Log.e(storageTag, "upload failed: file size exceeds limit ($rawSize > $maxSizeBytes bytes)")
+            return Result.failure(Exception(sizeErrorMessage))
+        }
 
         val fileBytes = try {
             context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -710,7 +808,6 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     // REMOTE KTP SECTION (TAHAP 5 - 8)
     // ==========================================================
 
-    // TAHAP 4: Remote CREATE KTP
     suspend fun createKtpApplicationRemote(
         context: Context,
         application: ApplicationEntity,
@@ -811,7 +908,6 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
     }
 
-    // TAHAP 5: Remote READ / SYNC KTP
     suspend fun syncKtpApplicationsRemote(currentUuid: String, localUserId: Int): Boolean {
         Log.d(TAG, "KTP remote sync start")
         return try {
@@ -869,7 +965,6 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
     }
 
-    // TAHAP 6: Fetch remote ktp_detail DTO by submissionCode
     suspend fun fetchKtpDetailRemote(
         submissionCode: String,
         currentUuid: String
@@ -921,7 +1016,6 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
     }
 
-    // TAHAP 7: Remote EDIT / UPDATE KTP WITH DOCUMENTS
     suspend fun updateKtpApplicationRemoteWithDocuments(
         context: Context,
         application: ApplicationEntity,
@@ -1040,7 +1134,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                     }
                 }
                 Log.d(editTag, "KTP remote update success for code ${application.submissionCode}")
-            } catch (ktpEx: Exception) {
+            } catch (_: Exception) {
                 cleanupNewlyUploadedFiles(newlyUploadedPaths)
                 return false
             }
@@ -1063,7 +1157,6 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
     }
 
-    // TAHAP 8: Remote DELETE KTP (applications + cascade ktp_detail + Storage cleanup)
     suspend fun deleteKtpApplicationRemote(submissionCode: String, currentSupabaseUuid: String): Boolean {
         Log.d(TAG, "KTP remote delete start for code $submissionCode")
         val isDbDeleteSuccess = try {
@@ -1097,6 +1190,705 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             }
         } catch (storageEx: Exception) {
             Log.e(storageTag, "KTP storage cleanup failed for folder $folderPath: ${storageEx.message}", storageEx)
+        }
+
+        return true
+    }
+
+    // ==========================================================
+    // REMOTE KK SECTION (TAHAP 3B - 6)
+    // ==========================================================
+
+    suspend fun createKkApplicationRemote(
+        context: Context,
+        application: ApplicationEntity,
+        currentSupabaseUuid: String,
+        doc1: SelectedDocument? = null,
+        doc2: SelectedDocument? = null,
+        doc3: SelectedDocument? = null,
+        doc4: SelectedDocument? = null,
+        doc5: SelectedDocument? = null,
+        doc6: SelectedDocument? = null,
+        doc7: SelectedDocument? = null,
+        doc8: SelectedDocument? = null,
+        doc9: SelectedDocument? = null,
+        doc10: SelectedDocument? = null,
+        docSelfie: SelectedDocument? = null
+    ): Boolean {
+        Log.d(TAG, "KK remote create start for code ${application.submissionCode}")
+        var insertedAppId: String? = null
+        val uploadedPaths = mutableListOf<String>()
+
+        return try {
+            val appDto = ApplicationRemoteDto(
+                userId = currentSupabaseUuid,
+                serviceType = application.serviceType,
+                category = application.category,
+                submissionCode = application.submissionCode,
+                submissionDate = application.submissionDate,
+                status = application.status.name,
+                note = application.note,
+                nikPelapor = application.nikPelapor,
+                namaPelapor = application.namaPelapor,
+                email = application.email,
+                whatsapp = application.whatsapp,
+                kecamatan = application.kecamatan,
+                kelurahan = application.kelurahan,
+                keterangan = application.keterangan
+            )
+
+            val insertedApp = postgrest.from("applications").insert(appDto) {
+                select()
+            }.decodeSingle<ApplicationRemoteDto>()
+
+            val remoteAppId = insertedApp.id
+            if (remoteAppId.isNullOrEmpty()) {
+                Log.e(TAG, "KK remote create failed: inserted application ID is null")
+                return false
+            }
+            insertedAppId = remoteAppId
+            Log.d(TAG, "KK applications remote insert success id $remoteAppId")
+
+            var doc1Path: String? = null
+            if (doc1 != null) {
+                val res = uploadKkDocumentRemote(context, doc1, currentSupabaseUuid, application.submissionCode, "doc1")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc1Path = res.getOrNull()
+                doc1Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc1 success path $doc1Path")
+            }
+
+            var doc2Path: String? = null
+            if (doc2 != null) {
+                val res = uploadKkDocumentRemote(context, doc2, currentSupabaseUuid, application.submissionCode, "doc2")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc2Path = res.getOrNull()
+                doc2Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc2 success path $doc2Path")
+            }
+
+            var doc3Path: String? = null
+            if (doc3 != null) {
+                val res = uploadKkDocumentRemote(context, doc3, currentSupabaseUuid, application.submissionCode, "doc3")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc3Path = res.getOrNull()
+                doc3Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc3 success path $doc3Path")
+            }
+
+            var doc4Path: String? = null
+            if (doc4 != null) {
+                val res = uploadKkDocumentRemote(context, doc4, currentSupabaseUuid, application.submissionCode, "doc4")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc4Path = res.getOrNull()
+                doc4Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc4 success path $doc4Path")
+            }
+
+            var doc5Path: String? = null
+            if (doc5 != null) {
+                val res = uploadKkDocumentRemote(context, doc5, currentSupabaseUuid, application.submissionCode, "doc5")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc5Path = res.getOrNull()
+                doc5Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc5 success path $doc5Path")
+            }
+
+            var doc6Path: String? = null
+            if (doc6 != null) {
+                val res = uploadKkDocumentRemote(context, doc6, currentSupabaseUuid, application.submissionCode, "doc6")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc6Path = res.getOrNull()
+                doc6Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc6 success path $doc6Path")
+            }
+
+            var doc7Path: String? = null
+            if (doc7 != null) {
+                val res = uploadKkDocumentRemote(context, doc7, currentSupabaseUuid, application.submissionCode, "doc7")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc7Path = res.getOrNull()
+                doc7Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc7 success path $doc7Path")
+            }
+
+            var doc8Path: String? = null
+            if (doc8 != null) {
+                val res = uploadKkDocumentRemote(context, doc8, currentSupabaseUuid, application.submissionCode, "doc8")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc8Path = res.getOrNull()
+                doc8Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc8 success path $doc8Path")
+            }
+
+            var doc9Path: String? = null
+            if (doc9 != null) {
+                val res = uploadKkDocumentRemote(context, doc9, currentSupabaseUuid, application.submissionCode, "doc9")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc9Path = res.getOrNull()
+                doc9Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc9 success path $doc9Path")
+            }
+
+            var doc10Path: String? = null
+            if (doc10 != null) {
+                val res = uploadKkDocumentRemote(context, doc10, currentSupabaseUuid, application.submissionCode, "doc10")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                doc10Path = res.getOrNull()
+                doc10Path?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload doc10 success path $doc10Path")
+            }
+
+            var docSelfiePath: String? = null
+            if (docSelfie != null) {
+                val res = uploadKkDocumentRemote(context, docSelfie, currentSupabaseUuid, application.submissionCode, "docSelfie")
+                if (res.isFailure) {
+                    cleanupNewlyUploadedFiles(uploadedPaths)
+                    cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                    return false
+                }
+                docSelfiePath = res.getOrNull()
+                docSelfiePath?.let { uploadedPaths.add(it) }
+                Log.d(TAG, "KK upload docSelfie success path $docSelfiePath")
+            }
+
+            val kkDetailDto = KkDetailRemoteDto(
+                applicationId = remoteAppId,
+                nikAnak = application.nikAnak?.ifEmpty { null },
+                namaAnak = application.namaAnak?.ifEmpty { null },
+                nomorKk = application.nomorKk?.ifEmpty { null },
+                doc1Path = doc1Path,
+                doc2Path = doc2Path,
+                doc3Path = doc3Path,
+                doc4Path = doc4Path,
+                doc5Path = doc5Path,
+                doc6Path = doc6Path,
+                doc7Path = doc7Path,
+                doc8Path = doc8Path,
+                doc9Path = doc9Path,
+                doc10Path = doc10Path,
+                docSelfiePath = docSelfiePath
+            )
+
+            try {
+                postgrest.from("kk_detail").insert(kkDetailDto)
+                Log.d(TAG, "KK detail remote insert success")
+            } catch (e: Exception) {
+                Log.e(TAG, "KK detail remote insert failed: ${e.message}", e)
+                cleanupNewlyUploadedFiles(uploadedPaths)
+                cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+                return false
+            }
+
+            applicationDao.insertApplication(application)
+            Log.d(TAG, "KK Room insert success for code ${application.submissionCode}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "KK remote create failed for code ${application.submissionCode}: ${e.message}", e)
+            cleanupNewlyUploadedFiles(uploadedPaths)
+            if (insertedAppId != null) {
+                cleanupRemoteApplication(application.submissionCode, currentSupabaseUuid)
+            }
+            false
+        }
+    }
+
+    suspend fun syncKkApplicationsRemote(currentUuid: String, localUserId: Int): Boolean {
+        Log.d(TAG, "KK remote sync start")
+        return try {
+            val remoteApps = postgrest.from("applications").select(Columns.raw("*, kk_detail(*)")) {
+                filter {
+                    eq("user_id", currentUuid)
+                    eq("service_type", "KK")
+                }
+            }.decodeList<ApplicationWithKkDetailRemoteDto>()
+
+            Log.d(TAG, "KK remote sync success count: ${remoteApps.size}")
+
+            for (dto in remoteApps) {
+                val existingLocal = applicationDao.getApplicationByCode(dto.submissionCode)
+                val statusEnum = try {
+                    ApplicationStatus.valueOf(dto.status)
+                } catch (_: Exception) {
+                    ApplicationStatus.SUBMITTED
+                }
+                val kk = dto.kkDetail
+
+                val entity = ApplicationEntity(
+                    id = existingLocal?.id ?: 0,
+                    userId = localUserId,
+                    serviceType = dto.serviceType,
+                    category = dto.category,
+                    submissionCode = dto.submissionCode,
+                    submissionDate = dto.submissionDate,
+                    status = statusEnum,
+                    note = dto.note ?: existingLocal?.note,
+                    kecamatan = dto.kecamatan,
+                    kelurahan = dto.kelurahan,
+                    email = dto.email,
+                    whatsapp = dto.whatsapp,
+                    keterangan = dto.keterangan,
+                    nikPelapor = dto.nikPelapor,
+                    namaPelapor = dto.namaPelapor,
+                    nikAnak = kk?.nikAnak ?: existingLocal?.nikAnak,
+                    namaAnak = kk?.namaAnak ?: existingLocal?.namaAnak,
+                    nomorKk = kk?.nomorKk ?: existingLocal?.nomorKk,
+                    doc1 = existingLocal?.doc1,
+                    doc2 = existingLocal?.doc2,
+                    doc3 = existingLocal?.doc3,
+                    doc4 = existingLocal?.doc4,
+                    doc5 = existingLocal?.doc5,
+                    doc6 = existingLocal?.doc6,
+                    doc7 = existingLocal?.doc7,
+                    doc8 = existingLocal?.doc8,
+                    doc9 = existingLocal?.doc9,
+                    doc10 = existingLocal?.doc10,
+                    docSelfie = existingLocal?.docSelfie,
+                    createdAt = existingLocal?.createdAt ?: System.currentTimeMillis()
+                )
+
+                if (existingLocal != null) {
+                    applicationDao.updateApplication(entity)
+                } else {
+                    applicationDao.insertApplication(entity)
+                }
+            }
+            Log.d(TAG, "Room sync success for KK")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "KK remote sync failed for user $currentUuid: ${e.message}", e)
+            false
+        }
+    }
+
+    suspend fun fetchKkDetailRemote(
+        submissionCode: String,
+        currentUuid: String
+    ): Result<KkDetailRemoteDto> {
+        Log.d(TAG, "KK fetch detail start for code $submissionCode")
+        return try {
+            val dto = postgrest.from("applications").select(Columns.raw("*, kk_detail(*)")) {
+                filter {
+                    eq("submission_code", submissionCode)
+                    eq("user_id", currentUuid)
+                    eq("service_type", "KK")
+                }
+            }.decodeSingle<ApplicationWithKkDetailRemoteDto>()
+
+            val kkDetail = dto.kkDetail
+            if (kkDetail != null) {
+                Log.d(TAG, "KK fetch detail success for code $submissionCode")
+                Result.success(kkDetail)
+            } else {
+                Log.e(TAG, "KK fetch detail failed: kk_detail is null")
+                Result.failure(Exception("Detail dokumen KK belum tersedia."))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "KK fetch detail failed for code $submissionCode: ${e.message}", e)
+            Result.failure(Exception("Gagal mengambil detail dokumen KK dari server: ${e.message}"))
+        }
+    }
+
+    fun getKkDocumentPathBySlot(
+        kkDetail: KkDetailRemoteDto,
+        documentSlot: String
+    ): Result<String> {
+        val validSlots = listOf(
+            "doc1", "doc2", "doc3", "doc4", "doc5",
+            "doc6", "doc7", "doc8", "doc9", "doc10", "docSelfie"
+        )
+        if (!validSlots.contains(documentSlot)) {
+            return Result.failure(Exception("Slot dokumen KK tidak valid."))
+        }
+
+        val path = when (documentSlot) {
+            "doc1" -> kkDetail.doc1Path
+            "doc2" -> kkDetail.doc2Path
+            "doc3" -> kkDetail.doc3Path
+            "doc4" -> kkDetail.doc4Path
+            "doc5" -> kkDetail.doc5Path
+            "doc6" -> kkDetail.doc6Path
+            "doc7" -> kkDetail.doc7Path
+            "doc8" -> kkDetail.doc8Path
+            "doc9" -> kkDetail.doc9Path
+            "doc10" -> kkDetail.doc10Path
+            "docSelfie" -> kkDetail.docSelfiePath
+            else -> null
+        }
+
+        return if (!path.isNullOrBlank()) {
+            Result.success(path)
+        } else {
+            Result.failure(Exception("Dokumen KK belum tersedia."))
+        }
+    }
+
+    // TAHAP 5: Remote EDIT / UPDATE KK WITH DOCUMENTS
+    suspend fun updateKkApplicationRemoteWithDocuments(
+        context: Context,
+        application: ApplicationEntity,
+        currentUuid: String,
+        newDoc1: SelectedDocument? = null,
+        newDoc2: SelectedDocument? = null,
+        newDoc3: SelectedDocument? = null,
+        newDoc4: SelectedDocument? = null,
+        newDoc5: SelectedDocument? = null,
+        newDoc6: SelectedDocument? = null,
+        newDoc7: SelectedDocument? = null,
+        newDoc8: SelectedDocument? = null,
+        newDoc9: SelectedDocument? = null,
+        newDoc10: SelectedDocument? = null,
+        newDocSelfie: SelectedDocument? = null
+    ): Boolean {
+        val editTag = "SIAPEL_EDIT_KK"
+        Log.d(editTag, "KK remote update start for code ${application.submissionCode}")
+
+        val newlyUploadedPaths = mutableListOf<String>()
+
+        return try {
+            val oldDetailResult = fetchKkDetailRemote(application.submissionCode, currentUuid)
+            if (oldDetailResult.isFailure) {
+                Log.e(editTag, "KK fetch old detail failed for code ${application.submissionCode}")
+                return false
+            }
+            val oldDetail = oldDetailResult.getOrThrow()
+
+            val oldDoc1Path = oldDetail.doc1Path
+            val oldDoc2Path = oldDetail.doc2Path
+            val oldDoc3Path = oldDetail.doc3Path
+            val oldDoc4Path = oldDetail.doc4Path
+            val oldDoc5Path = oldDetail.doc5Path
+            val oldDoc6Path = oldDetail.doc6Path
+            val oldDoc7Path = oldDetail.doc7Path
+            val oldDoc8Path = oldDetail.doc8Path
+            val oldDoc9Path = oldDetail.doc9Path
+            val oldDoc10Path = oldDetail.doc10Path
+            val oldDocSelfiePath = oldDetail.docSelfiePath
+
+            val isDoc1Replaced = isNewSelectedDocument(newDoc1)
+            val isDoc2Replaced = isNewSelectedDocument(newDoc2)
+            val isDoc3Replaced = isNewSelectedDocument(newDoc3)
+            val isDoc4Replaced = isNewSelectedDocument(newDoc4)
+            val isDoc5Replaced = isNewSelectedDocument(newDoc5)
+            val isDoc6Replaced = isNewSelectedDocument(newDoc6)
+            val isDoc7Replaced = isNewSelectedDocument(newDoc7)
+            val isDoc8Replaced = isNewSelectedDocument(newDoc8)
+            val isDoc9Replaced = isNewSelectedDocument(newDoc9)
+            val isDoc10Replaced = isNewSelectedDocument(newDoc10)
+            val isDocSelfieReplaced = isNewSelectedDocument(newDocSelfie)
+
+            val finalDoc1Path = if (isDoc1Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc1!!, currentUuid, application.submissionCode, "doc1")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc1Path
+
+            val finalDoc2Path = if (isDoc2Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc2!!, currentUuid, application.submissionCode, "doc2")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc2Path
+
+            val finalDoc3Path = if (isDoc3Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc3!!, currentUuid, application.submissionCode, "doc3")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc3Path
+
+            val finalDoc4Path = if (isDoc4Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc4!!, currentUuid, application.submissionCode, "doc4")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc4Path
+
+            val finalDoc5Path = if (isDoc5Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc5!!, currentUuid, application.submissionCode, "doc5")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc5Path
+
+            val finalDoc6Path = if (isDoc6Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc6!!, currentUuid, application.submissionCode, "doc6")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc6Path
+
+            val finalDoc7Path = if (isDoc7Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc7!!, currentUuid, application.submissionCode, "doc7")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc7Path
+
+            val finalDoc8Path = if (isDoc8Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc8!!, currentUuid, application.submissionCode, "doc8")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc8Path
+
+            val finalDoc9Path = if (isDoc9Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc9!!, currentUuid, application.submissionCode, "doc9")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc9Path
+
+            val finalDoc10Path = if (isDoc10Replaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDoc10!!, currentUuid, application.submissionCode, "doc10")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDoc10Path
+
+            val finalDocSelfiePath = if (isDocSelfieReplaced) {
+                val uploadRes = uploadKkDocumentRemote(context, newDocSelfie!!, currentUuid, application.submissionCode, "docSelfie")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else oldDocSelfiePath
+
+            val appDto = ApplicationRemoteDto(
+                userId = currentUuid,
+                serviceType = application.serviceType,
+                category = application.category,
+                submissionCode = application.submissionCode,
+                submissionDate = application.submissionDate,
+                status = application.status.name,
+                note = application.note,
+                nikPelapor = application.nikPelapor,
+                namaPelapor = application.namaPelapor,
+                email = application.email,
+                whatsapp = application.whatsapp,
+                kecamatan = application.kecamatan,
+                kelurahan = application.kelurahan,
+                keterangan = application.keterangan
+            )
+
+            val updatedApp = postgrest.from("applications").update(appDto) {
+                filter {
+                    eq("submission_code", application.submissionCode)
+                    eq("user_id", currentUuid)
+                    eq("service_type", "KK")
+                }
+                select()
+            }.decodeSingle<ApplicationRemoteDto>()
+
+            val remoteAppId = updatedApp.id
+            if (remoteAppId.isNullOrEmpty()) {
+                Log.e(editTag, "KK applications update failed: remoteAppId null")
+                cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                return false
+            }
+
+            val kkDetailDto = KkDetailRemoteDto(
+                applicationId = remoteAppId,
+                nikAnak = application.nikAnak?.ifEmpty { null },
+                namaAnak = application.namaAnak?.ifEmpty { null },
+                nomorKk = application.nomorKk?.ifEmpty { null },
+                doc1Path = finalDoc1Path,
+                doc2Path = finalDoc2Path,
+                doc3Path = finalDoc3Path,
+                doc4Path = finalDoc4Path,
+                doc5Path = finalDoc5Path,
+                doc6Path = finalDoc6Path,
+                doc7Path = finalDoc7Path,
+                doc8Path = finalDoc8Path,
+                doc9Path = finalDoc9Path,
+                doc10Path = finalDoc10Path,
+                docSelfiePath = finalDocSelfiePath
+            )
+
+            try {
+                postgrest.from("kk_detail").update(kkDetailDto) {
+                    filter {
+                        eq("application_id", remoteAppId)
+                    }
+                }
+                Log.d(editTag, "KK detail remote update success for code ${application.submissionCode}")
+            } catch (e: Exception) {
+                Log.e(editTag, "KK detail remote update failed: ${e.message}", e)
+                cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                return false
+            }
+
+            if (isDoc1Replaced && !oldDoc1Path.isNullOrBlank() && oldDoc1Path != finalDoc1Path) {
+                deleteSingleStorageFileBestEffort(oldDoc1Path, "doc1", editTag)
+            }
+            if (isDoc2Replaced && !oldDoc2Path.isNullOrBlank() && oldDoc2Path != finalDoc2Path) {
+                deleteSingleStorageFileBestEffort(oldDoc2Path, "doc2", editTag)
+            }
+            if (isDoc3Replaced && !oldDoc3Path.isNullOrBlank() && oldDoc3Path != finalDoc3Path) {
+                deleteSingleStorageFileBestEffort(oldDoc3Path, "doc3", editTag)
+            }
+            if (isDoc4Replaced && !oldDoc4Path.isNullOrBlank() && oldDoc4Path != finalDoc4Path) {
+                deleteSingleStorageFileBestEffort(oldDoc4Path, "doc4", editTag)
+            }
+            if (isDoc5Replaced && !oldDoc5Path.isNullOrBlank() && oldDoc5Path != finalDoc5Path) {
+                deleteSingleStorageFileBestEffort(oldDoc5Path, "doc5", editTag)
+            }
+            if (isDoc6Replaced && !oldDoc6Path.isNullOrBlank() && oldDoc6Path != finalDoc6Path) {
+                deleteSingleStorageFileBestEffort(oldDoc6Path, "doc6", editTag)
+            }
+            if (isDoc7Replaced && !oldDoc7Path.isNullOrBlank() && oldDoc7Path != finalDoc7Path) {
+                deleteSingleStorageFileBestEffort(oldDoc7Path, "doc7", editTag)
+            }
+            if (isDoc8Replaced && !oldDoc8Path.isNullOrBlank() && oldDoc8Path != finalDoc8Path) {
+                deleteSingleStorageFileBestEffort(oldDoc8Path, "doc8", editTag)
+            }
+            if (isDoc9Replaced && !oldDoc9Path.isNullOrBlank() && oldDoc9Path != finalDoc9Path) {
+                deleteSingleStorageFileBestEffort(oldDoc9Path, "doc9", editTag)
+            }
+            if (isDoc10Replaced && !oldDoc10Path.isNullOrBlank() && oldDoc10Path != finalDoc10Path) {
+                deleteSingleStorageFileBestEffort(oldDoc10Path, "doc10", editTag)
+            }
+            if (isDocSelfieReplaced && !oldDocSelfiePath.isNullOrBlank() && oldDocSelfiePath != finalDocSelfiePath) {
+                deleteSingleStorageFileBestEffort(oldDocSelfiePath, "docSelfie", editTag)
+            }
+
+            applicationDao.updateApplication(application)
+            Log.d(editTag, "KK remote update success for code ${application.submissionCode}")
+            true
+        } catch (e: Exception) {
+            Log.e(editTag, "KK remote update failed for code ${application.submissionCode}: ${e.message}", e)
+            cleanupNewlyUploadedFiles(newlyUploadedPaths)
+            false
+        }
+    }
+
+    // TAHAP 6: Remote DELETE KK (applications + cascade kk_detail + Storage cleanup)
+    suspend fun deleteKkApplicationRemote(
+        submissionCode: String,
+        currentSupabaseUuid: String
+    ): Boolean {
+        Log.d(TAG, "KK remote delete start for code $submissionCode")
+        val isDbDeleteSuccess = try {
+            postgrest.from("applications").delete {
+                filter {
+                    eq("submission_code", submissionCode)
+                    eq("user_id", currentSupabaseUuid)
+                    eq("service_type", "KK")
+                }
+            }
+            Log.d(TAG, "KK remote delete success for code $submissionCode")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "KK remote delete failed for code $submissionCode: ${e.message}", e)
+            false
+        }
+
+        if (!isDbDeleteSuccess) return false
+
+        val storageTag = "SIAPEL_STORAGE"
+        val folderPath = "$currentSupabaseUuid/$submissionCode"
+        Log.d(storageTag, "KK storage cleanup start for folder $folderPath")
+
+        try {
+            val bucket = storage.from("siapel-documents")
+            val files = bucket.list(folderPath)
+            if (files.isNotEmpty()) {
+                val fullPaths = files.map { file -> "$folderPath/${file.name}" }
+                bucket.delete(fullPaths)
+                Log.d(storageTag, "KK storage cleanup success for folder $folderPath")
+            } else {
+                Log.d(storageTag, "KK storage cleanup skipped: folder empty for $folderPath")
+            }
+        } catch (storageEx: Exception) {
+            Log.e(
+                storageTag,
+                "KK storage cleanup failed for folder $folderPath: ${storageEx.message}",
+                storageEx
+            )
         }
 
         return true

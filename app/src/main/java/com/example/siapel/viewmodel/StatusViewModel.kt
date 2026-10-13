@@ -7,6 +7,7 @@ import com.example.siapel.data.local.entity.ApplicationEntity
 import com.example.siapel.data.datastore.UserPreferencesRepository
 import com.example.siapel.data.remote.dto.KiaDetailRemoteDto
 import com.example.siapel.data.remote.dto.KtpDetailRemoteDto
+import com.example.siapel.data.remote.dto.KkDetailRemoteDto
 import com.example.siapel.data.repository.ApplicationRepository
 import com.example.siapel.data.repository.AuthRepository
 import com.example.siapel.model.ApplicationStatus
@@ -56,6 +57,10 @@ class StatusViewModel(
     // In-memory cache for KtpDetailRemoteDto
     private var cachedKtpDetailCode: String? = null
     private var cachedKtpDetail: KtpDetailRemoteDto? = null
+
+    // In-memory cache for KkDetailRemoteDto
+    private var cachedKkDetailCode: String? = null
+    private var cachedKkDetail: KkDetailRemoteDto? = null
 
     // In-memory cache for Signed URLs (240 seconds validity)
     private val signedUrlCache = mutableMapOf<String, CachedSignedUrl>()
@@ -125,7 +130,13 @@ class StatusViewModel(
                             localUserId = localUserId
                         )
 
-                        if (syncKiaSuccess || syncKtpSuccess) {
+                        Log.d(TAG, "KK remote sync start")
+                        val syncKkSuccess = applicationRepository.syncKkApplicationsRemote(
+                            currentUuid = currentUuid,
+                            localUserId = localUserId
+                        )
+
+                        if (syncKiaSuccess || syncKtpSuccess || syncKkSuccess) {
                             Log.d(TAG, "Manual refresh completed")
                         } else {
                             Log.e(TAG, "Manual refresh failed")
@@ -222,6 +233,32 @@ class StatusViewModel(
                 } else {
                     Log.e("SIAPEL_DELETE", "UUID resolved = false for KTP delete.")
                 }
+            } else if (application.serviceType.equals("KK", ignoreCase = true)) {
+                var currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                    ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                if (currentUuid.isNullOrEmpty()) {
+                    authRepository.validateSessionWithServer()
+                    currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                        ?: authRepository.getCurrentSupabaseSessionUserId()
+                }
+
+                if (!currentUuid.isNullOrEmpty()) {
+                    Log.d("SIAPEL_DELETE", "KK remote delete start for code ${application.submissionCode}")
+                    val remoteSuccess = applicationRepository.deleteKkApplicationRemote(
+                        submissionCode = application.submissionCode,
+                        currentSupabaseUuid = currentUuid
+                    )
+                    if (remoteSuccess) {
+                        Log.d("SIAPEL_DELETE", "KK remote delete success for code ${application.submissionCode}")
+                        applicationRepository.deleteApplication(application)
+                        isSuccess = true
+                    } else {
+                        Log.e("SIAPEL_DELETE", "KK remote delete failed for code ${application.submissionCode}")
+                    }
+                } else {
+                    Log.e("SIAPEL_DELETE", "UUID resolved = false for KK delete.")
+                }
             } else {
                 // Non-migrated services: retain existing local Room delete
                 Log.d("SIAPEL_DELETE", "Room delete start for code ${application.submissionCode}")
@@ -250,7 +287,6 @@ class StatusViewModel(
         val cacheDurationMillis = 240_000L // 240 seconds
 
         viewModelScope.launch {
-            // Check in-memory signed URL cache first
             val cachedUrlObj = signedUrlCache[cacheKey]
             if (cachedUrlObj != null && now < cachedUrlObj.expiresAtMillis) {
                 Log.d(storageTag, "signed url cache hit for $cacheKey")
@@ -264,7 +300,6 @@ class StatusViewModel(
 
             _documentViewLoading.value = true
             try {
-                // Resolve current Supabase Auth UUID
                 var currentUuid = authRepository.getCurrentSupabaseUser()?.id
                     ?: authRepository.getCurrentSupabaseSessionUserId()
 
@@ -281,7 +316,6 @@ class StatusViewModel(
                 }
                 Log.d(storageTag, "UUID resolved = true")
 
-                // Resolve KiaDetailRemoteDto (from memory cache or remote fetch)
                 val kiaDetail: KiaDetailRemoteDto = if (cachedKiaDetailCode == submissionCode && cachedKiaDetail != null) {
                     Log.d(storageTag, "cache hit")
                     cachedKiaDetail!!
@@ -305,7 +339,6 @@ class StatusViewModel(
                     }
                 }
 
-                // Extract storage path by slot
                 val pathResult = applicationRepository.getKiaDocumentPathBySlot(kiaDetail, documentSlot)
                 if (pathResult.isFailure) {
                     val errorMsg = pathResult.exceptionOrNull()?.message ?: "Dokumen belum tersedia."
@@ -316,13 +349,11 @@ class StatusViewModel(
                 val storagePath = pathResult.getOrThrow()
                 Log.d(storageTag, "path found")
 
-                // Generate signed URL for storage path
                 val urlResult = applicationRepository.createSignedUrlForStoragePath(storagePath)
                 if (urlResult.isSuccess) {
                     val signedUrl = urlResult.getOrThrow()
                     Log.d(storageTag, "signed url generated success")
                     
-                    // Save to memory cache for 240 seconds
                     signedUrlCache[cacheKey] = CachedSignedUrl(
                         url = signedUrl,
                         expiresAtMillis = System.currentTimeMillis() + cacheDurationMillis
@@ -356,7 +387,6 @@ class StatusViewModel(
         val cacheDurationMillis = 240_000L // 240 seconds
 
         viewModelScope.launch {
-            // Check in-memory signed URL cache first
             val cachedUrlObj = signedUrlCache[cacheKey]
             if (cachedUrlObj != null && now < cachedUrlObj.expiresAtMillis) {
                 Log.d(storageTag, "signed url cache hit for $cacheKey")
@@ -370,7 +400,6 @@ class StatusViewModel(
 
             _documentViewLoading.value = true
             try {
-                // Resolve current Supabase Auth UUID
                 var currentUuid = authRepository.getCurrentSupabaseUser()?.id
                     ?: authRepository.getCurrentSupabaseSessionUserId()
 
@@ -387,7 +416,6 @@ class StatusViewModel(
                 }
                 Log.d(storageTag, "UUID resolved = true")
 
-                // Resolve KtpDetailRemoteDto (from memory cache or remote fetch)
                 val ktpDetail: KtpDetailRemoteDto = if (cachedKtpDetailCode == submissionCode && cachedKtpDetail != null) {
                     Log.d(storageTag, "KTP cache hit")
                     cachedKtpDetail!!
@@ -411,7 +439,6 @@ class StatusViewModel(
                     }
                 }
 
-                // Extract storage path by slot
                 val pathResult = applicationRepository.getKtpDocumentPathBySlot(ktpDetail, documentSlot)
                 if (pathResult.isFailure) {
                     val errorMsg = pathResult.exceptionOrNull()?.message ?: "Dokumen KTP belum tersedia."
@@ -422,13 +449,11 @@ class StatusViewModel(
                 val storagePath = pathResult.getOrThrow()
                 Log.d(storageTag, "KTP path found: $storagePath")
 
-                // Generate signed URL for storage path
                 val urlResult = applicationRepository.createSignedUrlForStoragePath(storagePath)
                 if (urlResult.isSuccess) {
                     val signedUrl = urlResult.getOrThrow()
                     Log.d(storageTag, "KTP signed url generated success")
                     
-                    // Save to memory cache for 240 seconds
                     signedUrlCache[cacheKey] = CachedSignedUrl(
                         url = signedUrl,
                         expiresAtMillis = System.currentTimeMillis() + cacheDurationMillis
@@ -444,6 +469,106 @@ class StatusViewModel(
             } catch (e: Exception) {
                 Log.e(storageTag, "view KTP document exception: ${e.message}", e)
                 _documentViewError.emit("Terjadi kesalahan saat memuat dokumen KTP: ${e.message}")
+            } finally {
+                _documentViewLoading.value = false
+            }
+        }
+    }
+
+    fun viewKkDocument(
+        submissionCode: String,
+        documentSlot: String
+    ) {
+        val storageTag = "SIAPEL_STORAGE"
+        Log.d(storageTag, "KK view document start code $submissionCode slot $documentSlot")
+
+        val cacheKey = "$submissionCode-$documentSlot"
+        val now = System.currentTimeMillis()
+        val cacheDurationMillis = 240_000L // 240 seconds
+
+        viewModelScope.launch {
+            val cachedUrlObj = signedUrlCache[cacheKey]
+            if (cachedUrlObj != null && now < cachedUrlObj.expiresAtMillis) {
+                Log.d(storageTag, "KK using cached signed url for $cacheKey")
+                _openDocumentUrl.emit(cachedUrlObj.url)
+                return@launch
+            } else if (cachedUrlObj != null) {
+                Log.d(storageTag, "signed url cache expired for $cacheKey")
+            } else {
+                Log.d(storageTag, "signed url cache miss for $cacheKey")
+            }
+
+            _documentViewLoading.value = true
+            try {
+                var currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                    ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                if (currentUuid.isNullOrEmpty()) {
+                    authRepository.validateSessionWithServer()
+                    currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                        ?: authRepository.getCurrentSupabaseSessionUserId()
+                }
+
+                if (currentUuid.isNullOrEmpty()) {
+                    Log.e(storageTag, "UUID resolved = false")
+                    _documentViewError.emit("Sesi pengguna tidak valid. Silakan login ulang.")
+                    return@launch
+                }
+                Log.d(storageTag, "UUID resolved = true")
+
+                val kkDetail: KkDetailRemoteDto = if (cachedKkDetailCode == submissionCode && cachedKkDetail != null) {
+                    Log.d(storageTag, "KK fetch detail success for code $submissionCode")
+                    cachedKkDetail!!
+                } else {
+                    Log.d(storageTag, "KK cache miss")
+                    val fetchResult = applicationRepository.fetchKkDetailRemote(
+                        submissionCode = submissionCode,
+                        currentUuid = currentUuid
+                    )
+                    if (fetchResult.isSuccess) {
+                        Log.d(storageTag, "KK fetch detail success for code $submissionCode")
+                        val detail = fetchResult.getOrThrow()
+                        cachedKkDetailCode = submissionCode
+                        cachedKkDetail = detail
+                        detail
+                    } else {
+                        val errorMsg = fetchResult.exceptionOrNull()?.message ?: "Gagal mengambil detail dokumen KK."
+                        Log.e(storageTag, "fetch kk_detail failed: $errorMsg")
+                        _documentViewError.emit(errorMsg)
+                        return@launch
+                    }
+                }
+
+                val pathResult = applicationRepository.getKkDocumentPathBySlot(kkDetail, documentSlot)
+                if (pathResult.isFailure) {
+                    val errorMsg = pathResult.exceptionOrNull()?.message ?: "Dokumen KK belum tersedia."
+                    Log.e(storageTag, "path failed: $errorMsg")
+                    _documentViewError.emit(errorMsg)
+                    return@launch
+                }
+                val storagePath = pathResult.getOrThrow()
+                Log.d(storageTag, "KK path found: $storagePath")
+
+                val urlResult = applicationRepository.createSignedUrlForStoragePath(storagePath)
+                if (urlResult.isSuccess) {
+                    val signedUrl = urlResult.getOrThrow()
+                    Log.d(storageTag, "KK signed url success for $cacheKey")
+                    
+                    signedUrlCache[cacheKey] = CachedSignedUrl(
+                        url = signedUrl,
+                        expiresAtMillis = System.currentTimeMillis() + cacheDurationMillis
+                    )
+                    Log.d(storageTag, "signed url cached for slot $documentSlot")
+
+                    _openDocumentUrl.emit(signedUrl)
+                } else {
+                    val errorMsg = urlResult.exceptionOrNull()?.message ?: "Gagal membuka dokumen KK."
+                    Log.e(storageTag, "signed url generated failed: $errorMsg")
+                    _documentViewError.emit(errorMsg)
+                }
+            } catch (e: Exception) {
+                Log.e(storageTag, "KK view document failed code $submissionCode slot $documentSlot: ${e.message}", e)
+                _documentViewError.emit("Gagal membuka dokumen KK: ${e.message}")
             } finally {
                 _documentViewLoading.value = false
             }

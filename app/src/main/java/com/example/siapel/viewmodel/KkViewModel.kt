@@ -1,6 +1,8 @@
 package com.example.siapel.viewmodel
 
+import android.content.Context
 import android.net.Uri
+import android.util.Log
 import android.util.Patterns
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +23,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+
+private fun isSelectedDocChanged(selected: SelectedDocument?, oldUriStr: String?): Boolean {
+    val newUriStr = selected?.uri?.toString()
+    return !newUriStr.isNullOrBlank() && newUriStr != oldUriStr
+}
 
 class KkViewModel(
     private val applicationRepository: ApplicationRepository,
@@ -273,7 +280,7 @@ class KkViewModel(
                 namaPelaporError == null && nikAnakError == null && namaAnakError == null && nomorKkError == null
     }
 
-    fun submitForm() {
+    fun submitForm(context: Context) {
         if (validate()) {
             _submitState.value = SubmitState.LOADING
             viewModelScope.launch {
@@ -290,6 +297,19 @@ class KkViewModel(
                         }
 
                         val state = _uiState.value
+
+                        val doc1Changed = isSelectedDocChanged(state.docKkTerbaru, existing.doc1)
+                        val doc2Changed = isSelectedDocChanged(state.docF101, existing.doc2)
+                        val doc3Changed = isSelectedDocChanged(state.docF102, existing.doc3)
+                        val doc4Changed = isSelectedDocChanged(state.docF103, existing.doc4)
+                        val doc5Changed = isSelectedDocChanged(state.docF106, existing.doc5)
+                        val doc6Changed = isSelectedDocChanged(state.docSptjm, existing.doc6)
+                        val doc7Changed = isSelectedDocChanged(state.docSuratPernyataanTempatTinggal, existing.doc7)
+                        val doc8Changed = isSelectedDocChanged(state.docSuratKehilanganKkRusak, existing.doc8)
+                        val doc9Changed = isSelectedDocChanged(state.docKtpHilangRusak, existing.doc9)
+                        val doc10Changed = isSelectedDocChanged(state.docPendukung, existing.doc10)
+                        val docSelfieChanged = isSelectedDocChanged(state.docSelfie, existing.docSelfie)
+
                         val updatedApp = ApplicationEntity(
                             id = editId,
                             userId = originalUserId,
@@ -308,26 +328,63 @@ class KkViewModel(
                             nikAnak = state.nikAnak,
                             namaAnak = state.namaAnak,
                             nomorKk = state.nomorKk,
-                            doc1 = state.docKkTerbaru?.uri?.toString(),
-                            doc2 = state.docF101?.uri?.toString(),
-                            doc3 = state.docF102?.uri?.toString(),
-                            doc4 = state.docF103?.uri?.toString(),
-                            doc5 = state.docF106?.uri?.toString(),
-                            doc6 = state.docSptjm?.uri?.toString(),
-                            doc7 = state.docSuratPernyataanTempatTinggal?.uri?.toString(),
-                            doc8 = state.docSuratKehilanganKkRusak?.uri?.toString(),
-                            doc9 = state.docKtpHilangRusak?.uri?.toString(),
-                            doc10 = state.docPendukung?.uri?.toString(),
-                            docSelfie = state.docSelfie?.uri?.toString(),
+                            doc1 = if (doc1Changed) state.docKkTerbaru?.uri?.toString() else existing.doc1,
+                            doc2 = if (doc2Changed) state.docF101?.uri?.toString() else existing.doc2,
+                            doc3 = if (doc3Changed) state.docF102?.uri?.toString() else existing.doc3,
+                            doc4 = if (doc4Changed) state.docF103?.uri?.toString() else existing.doc4,
+                            doc5 = if (doc5Changed) state.docF106?.uri?.toString() else existing.doc5,
+                            doc6 = if (doc6Changed) state.docSptjm?.uri?.toString() else existing.doc6,
+                            doc7 = if (doc7Changed) state.docSuratPernyataanTempatTinggal?.uri?.toString() else existing.doc7,
+                            doc8 = if (doc8Changed) state.docSuratKehilanganKkRusak?.uri?.toString() else existing.doc8,
+                            doc9 = if (doc9Changed) state.docKtpHilangRusak?.uri?.toString() else existing.doc9,
+                            doc10 = if (doc10Changed) state.docPendukung?.uri?.toString() else existing.doc10,
+                            docSelfie = if (docSelfieChanged) state.docSelfie?.uri?.toString() else existing.docSelfie,
                             createdAt = originalCreatedAt
                         )
 
-                        applicationRepository.updateApplication(updatedApp)
-                        _submitState.value = SubmitState.SUCCESS
-                        delay(800)
-                        _submissionResult.emit(true)
+                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                        if (!currentUuid.isNullOrEmpty()) {
+                            val isRemoteUpdateSuccess = applicationRepository.updateKkApplicationRemoteWithDocuments(
+                                context = context,
+                                application = updatedApp,
+                                currentUuid = currentUuid,
+                                newDoc1 = if (doc1Changed) state.docKkTerbaru else null,
+                                newDoc2 = if (doc2Changed) state.docF101 else null,
+                                newDoc3 = if (doc3Changed) state.docF102 else null,
+                                newDoc4 = if (doc4Changed) state.docF103 else null,
+                                newDoc5 = if (doc5Changed) state.docF106 else null,
+                                newDoc6 = if (doc6Changed) state.docSptjm else null,
+                                newDoc7 = if (doc7Changed) state.docSuratPernyataanTempatTinggal else null,
+                                newDoc8 = if (doc8Changed) state.docSuratKehilanganKkRusak else null,
+                                newDoc9 = if (doc9Changed) state.docKtpHilangRusak else null,
+                                newDoc10 = if (doc10Changed) state.docPendukung else null,
+                                newDocSelfie = if (docSelfieChanged) state.docSelfie else null
+                            )
+
+                            if (isRemoteUpdateSuccess) {
+                                _submitState.value = SubmitState.SUCCESS
+                                delay(800)
+                                _submissionResult.emit(true)
+                            } else {
+                                Log.e("SIAPEL_EDIT_KK", "KK remote update failed for code ${updatedApp.submissionCode}. Room update skipped.")
+                                _submitState.value = SubmitState.ERROR
+                                delay(1000)
+                                _submitState.value = SubmitState.IDLE
+                                _submissionResult.emit(false)
+                            }
+                        } else {
+                            applicationRepository.updateApplication(updatedApp)
+                            _submitState.value = SubmitState.SUCCESS
+                            delay(800)
+                            _submissionResult.emit(true)
+                        }
                     } else {
                         val userSession = userPreferencesRepository.userSessionFlow.first()
+                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
                         if (userSession.isLoggedIn) {
                             val state = _uiState.value
                             val submissionCode = "KK-${System.currentTimeMillis().toString().takeLast(6)}"
@@ -363,10 +420,41 @@ class KkViewModel(
                                 docSelfie = state.docSelfie?.uri?.toString()
                             )
 
-                            applicationRepository.insertApplication(application)
-                            _submitState.value = SubmitState.SUCCESS
-                            delay(800)
-                            _submissionResult.emit(true)
+                            if (!currentUuid.isNullOrEmpty()) {
+                                val remoteSuccess = applicationRepository.createKkApplicationRemote(
+                                    context = context,
+                                    application = application,
+                                    currentSupabaseUuid = currentUuid,
+                                    doc1 = state.docKkTerbaru,
+                                    doc2 = state.docF101,
+                                    doc3 = state.docF102,
+                                    doc4 = state.docF103,
+                                    doc5 = state.docF106,
+                                    doc6 = state.docSptjm,
+                                    doc7 = state.docSuratPernyataanTempatTinggal,
+                                    doc8 = state.docSuratKehilanganKkRusak,
+                                    doc9 = state.docKtpHilangRusak,
+                                    doc10 = state.docPendukung,
+                                    docSelfie = state.docSelfie
+                                )
+
+                                if (remoteSuccess) {
+                                    _submitState.value = SubmitState.SUCCESS
+                                    delay(800)
+                                    _submissionResult.emit(true)
+                                } else {
+                                    Log.e("SIAPEL_STORAGE", "KK remote create failed. Local Room fallback skipped.")
+                                    _submitState.value = SubmitState.ERROR
+                                    delay(1000)
+                                    _submitState.value = SubmitState.IDLE
+                                    _submissionResult.emit(false)
+                                }
+                            } else {
+                                applicationRepository.insertApplication(application)
+                                _submitState.value = SubmitState.SUCCESS
+                                delay(800)
+                                _submissionResult.emit(true)
+                            }
                         } else {
                             _submitState.value = SubmitState.ERROR
                             delay(1000)
@@ -375,6 +463,7 @@ class KkViewModel(
                         }
                     }
                 } catch (e: Exception) {
+                    Log.e("SIAPEL_STORAGE", "KK submitForm exception: ${e.message}", e)
                     _submitState.value = SubmitState.ERROR
                     delay(1000)
                     _submitState.value = SubmitState.IDLE
