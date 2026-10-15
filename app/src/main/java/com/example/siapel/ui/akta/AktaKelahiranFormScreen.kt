@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -85,8 +86,14 @@ fun AktaKelahiranFormScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background),
-            contentPadding = PaddingValues(16.dp),
+                .background(MaterialTheme.colorScheme.background)
+                .imePadding(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = 20.dp
+            ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -378,10 +385,11 @@ fun AktaKelahiranFormScreen(
 
             // Submit Button
             item {
+                val context = LocalContext.current
                 SiapelPrimaryButton(
                     text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
                     onClick = {
-                        viewModel.submitForm()
+                        viewModel.submitForm(context)
                     },
                     submitState = submitState,
                     loadingText = if (isEditMode) "Menyimpan perubahan" else "Mengirim pengajuan",

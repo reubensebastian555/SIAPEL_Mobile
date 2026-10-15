@@ -149,7 +149,9 @@ fun HomeScreen(
                         text = userName,
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = "Kelola layanan administrasi kependudukan Anda dengan lebih mudah.",
@@ -418,7 +420,7 @@ fun ServiceCardItem(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         modifier = Modifier
             .fillMaxWidth()
-            .height(112.dp)
+            .heightIn(min = 112.dp)
             .clickable { onClick() }
     ) {
         Column(

@@ -39,5 +39,18 @@ data class AktaKelahiranFormState(
     val docSptjmKelahiran: SelectedDocument? = null,
     val docFormPelaporanKelahiran: SelectedDocument? = null,
     val docKtpAnak: SelectedDocument? = null,
-    val docSelfie: SelectedDocument? = null
+    val docSelfie: SelectedDocument? = null,
+
+    // Touched Flags for Edit Mode Tracking
+    val docKkTerbaruTouched: Boolean = false,
+    val docKtpIbuTouched: Boolean = false,
+    val docKtpBapakTouched: Boolean = false,
+    val docFormF201Touched: Boolean = false,
+    val docFormF102Touched: Boolean = false,
+    val docSuratKelahiranTouched: Boolean = false,
+    val docBukuNikahTouched: Boolean = false,
+    val docSptjmKelahiranTouched: Boolean = false,
+    val docFormPelaporanKelahiranTouched: Boolean = false,
+    val docKtpAnakTouched: Boolean = false,
+    val docSelfieTouched: Boolean = false
 )

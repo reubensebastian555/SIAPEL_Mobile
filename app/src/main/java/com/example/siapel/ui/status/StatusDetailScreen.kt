@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.siapel.data.local.entity.ApplicationEntity
@@ -236,7 +237,9 @@ fun StatusDetailScreen(
                                             text = req.label,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 14.sp,
-                                            modifier = Modifier.weight(1f).padding(end = 8.dp)
+                                            modifier = Modifier.weight(1f).padding(end = 8.dp),
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                         val statusText = if (req.isAttached) "Terlampir" else "Belum Dilampirkan"
                                         val statusColor = if (req.isAttached) successColor else MaterialTheme.colorScheme.error
@@ -253,7 +256,12 @@ fun StatusDetailScreen(
                                                 Spacer(modifier = Modifier.width(4.dp))
                                                 IconButton(
                                                     onClick = {
-                                                        if (application.serviceType.equals("KK", ignoreCase = true)) {
+                                                        if (application.serviceType.equals("AKTA", ignoreCase = true)) {
+                                                            viewModel.viewAktaDocument(
+                                                                submissionCode = application.submissionCode,
+                                                                documentSlot = slot
+                                                            )
+                                                        } else if (application.serviceType.equals("KK", ignoreCase = true)) {
                                                             viewModel.viewKkDocument(
                                                                 submissionCode = application.submissionCode,
                                                                 documentSlot = slot
@@ -521,6 +529,24 @@ fun getSlotForDocumentRequirement(application: ApplicationEntity, index: Int): S
                 }
             } else null
         }
+        "AKTA" -> {
+            val reqs = getDocumentRequirements(application)
+            if (index in reqs.indices) {
+                when (reqs[index].label) {
+                    "Upload Kartu Keluarga Terbaru" -> "doc1"
+                    "Upload KTP Ibu" -> "doc2"
+                    "Upload KTP Bapak" -> "doc3"
+                    "Upload Formulir Pelaporan Pencatatan Sipil (F-2.01)" -> "doc4"
+                    "Upload Formulir Peristiwa Kependudukan (F-1.02)" -> "doc5"
+                    "Upload Surat Kelahiran / SPTJM" -> "doc6"
+                    "Upload Buku Nikah / SPTJM" -> "doc7"
+                    "Upload SPTJM Kebenaran Data", "Upload KTP Anak" -> "doc8"
+                    "Upload Formulir Pelaporan Kelahiran" -> "doc9"
+                    "Upload Selfie Pelapor" -> "docSelfie"
+                    else -> null
+                }
+            } else null
+        }
         else -> null
     }
 }
@@ -532,12 +558,20 @@ fun DetailItem(label: String, value: String, isBold: Boolean = false) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 14.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             value,
             color = MaterialTheme.colorScheme.onSurface,
             fontSize = 14.sp,
-            fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal
+            fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

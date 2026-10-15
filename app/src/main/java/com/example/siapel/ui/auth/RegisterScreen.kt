@@ -46,8 +46,14 @@ fun RegisterScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .padding(paddingValues),
-            contentPadding = PaddingValues(28.dp),
+                .padding(paddingValues)
+                .imePadding(),
+            contentPadding = PaddingValues(
+                start = 28.dp,
+                end = 28.dp,
+                top = 28.dp,
+                bottom = 16.dp
+            ),
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.Start
         ) {
