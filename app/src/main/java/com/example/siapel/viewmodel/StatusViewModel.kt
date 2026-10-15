@@ -9,6 +9,7 @@ import com.example.siapel.data.remote.dto.KiaDetailRemoteDto
 import com.example.siapel.data.remote.dto.KtpDetailRemoteDto
 import com.example.siapel.data.remote.dto.KkDetailRemoteDto
 import com.example.siapel.data.remote.dto.AktaDetailRemoteDto
+import com.example.siapel.data.remote.dto.DisabilitasDetailRemoteDto
 import com.example.siapel.data.repository.ApplicationRepository
 import com.example.siapel.data.repository.AuthRepository
 import com.example.siapel.model.ApplicationStatus
@@ -66,6 +67,10 @@ class StatusViewModel(
     // In-memory cache for AktaDetailRemoteDto
     private var cachedAktaDetailCode: String? = null
     private var cachedAktaDetail: AktaDetailRemoteDto? = null
+
+    // In-memory cache for DisabilitasDetailRemoteDto
+    private var cachedDisabilitasDetailCode: String? = null
+    private var cachedDisabilitasDetail: DisabilitasDetailRemoteDto? = null
 
     // In-memory cache for Signed URLs (240 seconds validity)
     private val signedUrlCache = mutableMapOf<String, CachedSignedUrl>()
@@ -147,7 +152,13 @@ class StatusViewModel(
                             localUserId = localUserId
                         )
 
-                        if (syncKiaSuccess || syncKtpSuccess || syncKkSuccess || syncAktaSuccess) {
+                        Log.d(TAG, "DISABILITAS remote sync start")
+                        val syncDisabilitasSuccess = applicationRepository.syncDisabilitasApplicationsRemote(
+                            currentUuid = currentUuid,
+                            localUserId = localUserId
+                        )
+
+                        if (syncKiaSuccess || syncKtpSuccess || syncKkSuccess || syncAktaSuccess || syncDisabilitasSuccess) {
                             Log.d(TAG, "Manual refresh completed")
                         } else {
                             Log.e(TAG, "Manual refresh failed")
@@ -295,6 +306,32 @@ class StatusViewModel(
                     }
                 } else {
                     Log.e("SIAPEL_DELETE", "UUID resolved = false for KK delete.")
+                }
+            } else if (application.serviceType.equals("DISABILITAS", ignoreCase = true)) {
+                var currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                    ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                if (currentUuid.isNullOrEmpty()) {
+                    authRepository.validateSessionWithServer()
+                    currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                        ?: authRepository.getCurrentSupabaseSessionUserId()
+                }
+
+                if (!currentUuid.isNullOrEmpty()) {
+                    Log.d("SIAPEL_DELETE", "DISABILITAS remote delete start for code ${application.submissionCode}")
+                    val remoteSuccess = applicationRepository.deleteDisabilitasApplicationRemote(
+                        submissionCode = application.submissionCode,
+                        currentSupabaseUuid = currentUuid
+                    )
+                    if (remoteSuccess) {
+                        Log.d("SIAPEL_DELETE", "DISABILITAS remote delete success for code ${application.submissionCode}")
+                        applicationRepository.deleteApplication(application)
+                        isSuccess = true
+                    } else {
+                        Log.e("SIAPEL_DELETE", "DISABILITAS remote delete failed for code ${application.submissionCode}")
+                    }
+                } else {
+                    Log.e("SIAPEL_DELETE", "UUID resolved = false for DISABILITAS delete.")
                 }
             } else {
                 // Non-migrated services: retain existing local Room delete
@@ -706,6 +743,106 @@ class StatusViewModel(
             } catch (e: Exception) {
                 Log.e(storageTag, "AKTA view document failed code $submissionCode slot $documentSlot: ${e.message}", e)
                 _documentViewError.emit("Gagal membuka dokumen AKTA: ${e.message}")
+            } finally {
+                _documentViewLoading.value = false
+            }
+        }
+    }
+
+    fun viewDisabilitasDocument(
+        submissionCode: String,
+        documentSlot: String
+    ) {
+        val storageTag = "SIAPEL_STORAGE"
+        Log.d(storageTag, "DISABILITAS view document start code $submissionCode slot $documentSlot")
+
+        val cacheKey = "$submissionCode-$documentSlot"
+        val now = System.currentTimeMillis()
+        val cacheDurationMillis = 240_000L // 240 seconds
+
+        viewModelScope.launch {
+            val cachedUrlObj = signedUrlCache[cacheKey]
+            if (cachedUrlObj != null && now < cachedUrlObj.expiresAtMillis) {
+                Log.d(storageTag, "DISABILITAS using cached signed url for $cacheKey")
+                _openDocumentUrl.emit(cachedUrlObj.url)
+                return@launch
+            } else if (cachedUrlObj != null) {
+                Log.d(storageTag, "signed url cache expired for $cacheKey")
+            } else {
+                Log.d(storageTag, "signed url cache miss for $cacheKey")
+            }
+
+            _documentViewLoading.value = true
+            try {
+                var currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                    ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                if (currentUuid.isNullOrEmpty()) {
+                    authRepository.validateSessionWithServer()
+                    currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                        ?: authRepository.getCurrentSupabaseSessionUserId()
+                }
+
+                if (currentUuid.isNullOrEmpty()) {
+                    Log.e(storageTag, "UUID resolved = false")
+                    _documentViewError.emit("Sesi pengguna tidak valid. Silakan login ulang.")
+                    return@launch
+                }
+                Log.d(storageTag, "UUID resolved = true")
+
+                val disabilitasDetail: DisabilitasDetailRemoteDto = if (cachedDisabilitasDetailCode == submissionCode && cachedDisabilitasDetail != null) {
+                    Log.d(storageTag, "DISABILITAS fetch detail success for code $submissionCode")
+                    cachedDisabilitasDetail!!
+                } else {
+                    Log.d(storageTag, "DISABILITAS cache miss")
+                    val fetchResult = applicationRepository.fetchDisabilitasDetailRemote(
+                        submissionCode = submissionCode,
+                        currentUuid = currentUuid
+                    )
+                    if (fetchResult.isSuccess) {
+                        Log.d(storageTag, "DISABILITAS fetch detail success for code $submissionCode")
+                        val detail = fetchResult.getOrThrow()
+                        cachedDisabilitasDetailCode = submissionCode
+                        cachedDisabilitasDetail = detail
+                        detail
+                    } else {
+                        val errorMsg = fetchResult.exceptionOrNull()?.message ?: "Gagal mengambil detail dokumen DISABILITAS."
+                        Log.e(storageTag, "fetch disabilitas_detail failed: $errorMsg")
+                        _documentViewError.emit(errorMsg)
+                        return@launch
+                    }
+                }
+
+                val pathResult = applicationRepository.getDisabilitasDocumentPathBySlot(disabilitasDetail, documentSlot)
+                if (pathResult.isFailure) {
+                    val errorMsg = pathResult.exceptionOrNull()?.message ?: "Dokumen DISABILITAS belum tersedia."
+                    Log.e(storageTag, "path failed: $errorMsg")
+                    _documentViewError.emit(errorMsg)
+                    return@launch
+                }
+                val storagePath = pathResult.getOrThrow()
+                Log.d(storageTag, "DISABILITAS path found: $storagePath")
+
+                val urlResult = applicationRepository.createSignedUrlForStoragePath(storagePath)
+                if (urlResult.isSuccess) {
+                    val signedUrl = urlResult.getOrThrow()
+                    Log.d(storageTag, "DISABILITAS signed url success for $cacheKey")
+                    
+                    signedUrlCache[cacheKey] = CachedSignedUrl(
+                        url = signedUrl,
+                        expiresAtMillis = System.currentTimeMillis() + cacheDurationMillis
+                    )
+                    Log.d(storageTag, "signed url cached for slot $documentSlot")
+
+                    _openDocumentUrl.emit(signedUrl)
+                } else {
+                    val errorMsg = urlResult.exceptionOrNull()?.message ?: "Gagal membuka dokumen DISABILITAS."
+                    Log.e(storageTag, "signed url generated failed: $errorMsg")
+                    _documentViewError.emit(errorMsg)
+                }
+            } catch (e: Exception) {
+                Log.e(storageTag, "DISABILITAS view document failed code $submissionCode slot $documentSlot: ${e.message}", e)
+                _documentViewError.emit("Gagal membuka dokumen DISABILITAS: ${e.message}")
             } finally {
                 _documentViewLoading.value = false
             }

@@ -271,6 +271,11 @@ fun StatusDetailScreen(
                                                                 submissionCode = application.submissionCode,
                                                                 documentSlot = slot
                                                             )
+                                                        } else if (application.serviceType.equals("DISABILITAS", ignoreCase = true)) {
+                                                            viewModel.viewDisabilitasDocument(
+                                                                submissionCode = application.submissionCode,
+                                                                documentSlot = slot
+                                                            )
                                                         } else {
                                                             viewModel.viewKiaDocument(
                                                                 submissionCode = application.submissionCode,
@@ -546,6 +551,14 @@ fun getSlotForDocumentRequirement(application: ApplicationEntity, index: Int): S
                     else -> null
                 }
             } else null
+        }
+        "DISABILITAS" -> {
+            when (index) {
+                0 -> "doc1"
+                1 -> "doc2"
+                2 -> "docSelfie"
+                else -> null
+            }
         }
         else -> null
     }

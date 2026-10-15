@@ -1,6 +1,8 @@
 package com.example.siapel.viewmodel
 
+import android.content.Context
 import android.net.Uri
+import android.util.Log
 import android.util.Patterns
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +42,10 @@ class DisabilitasViewModel(
     private var originalSubmissionCode: String = ""
     private var originalSubmissionDate: String = ""
     private var originalCreatedAt: Long = System.currentTimeMillis()
+
+    private var docKkTouched = false
+    private var docKtpTouched = false
+    private var docSelfieTouched = false
 
     private val _submissionResult = MutableSharedFlow<Boolean>()
     val submissionResult: SharedFlow<Boolean> = _submissionResult
@@ -89,6 +95,10 @@ class DisabilitasViewModel(
                 originalSubmissionDate = app.submissionDate
                 originalCreatedAt = app.createdAt
                 _isEditMode.value = true
+
+                docKkTouched = false
+                docKtpTouched = false
+                docSelfieTouched = false
 
                 _uiState.value = _uiState.value.copy(
                     kategoriLayanan = app.category,
@@ -149,14 +159,17 @@ class DisabilitasViewModel(
 
     // Document Picker setters
     fun onDocKkChange(doc: SelectedDocument?) {
+        docKkTouched = true
         _uiState.value = _uiState.value.copy(docKk = doc, docKkError = null)
     }
 
     fun onDocKtpChange(doc: SelectedDocument?) {
+        docKtpTouched = true
         _uiState.value = _uiState.value.copy(docKtp = doc, docKtpError = null)
     }
 
     fun onDocSelfieChange(doc: SelectedDocument?) {
+        docSelfieTouched = true
         _uiState.value = _uiState.value.copy(docSelfie = doc, docSelfieError = null)
     }
 
@@ -207,7 +220,7 @@ class DisabilitasViewModel(
                 namaPelaporError == null && docKkError == null && docKtpError == null && docSelfieError == null
     }
 
-    fun submitForm() {
+    fun submitForm(context: Context) {
         if (validate()) {
             _submitState.value = SubmitState.LOADING
             viewModelScope.launch {
@@ -224,6 +237,15 @@ class DisabilitasViewModel(
                         }
 
                         val state = _uiState.value
+
+                        val newDoc1 = if (docKkTouched) state.docKk else null
+                        val newDoc2 = if (docKtpTouched) state.docKtp else null
+                        val newDocSelfie = if (docSelfieTouched) state.docSelfie else null
+
+                        val finalRoomDoc1 = if (newDoc1 != null) newDoc1.uri?.toString() else existing.doc1
+                        val finalRoomDoc2 = if (newDoc2 != null) newDoc2.uri?.toString() else existing.doc2
+                        val finalRoomDocSelfie = if (newDocSelfie != null) newDocSelfie.uri?.toString() else existing.docSelfie
+
                         val updatedApp = ApplicationEntity(
                             id = editId,
                             userId = originalUserId,
@@ -239,18 +261,61 @@ class DisabilitasViewModel(
                             keterangan = state.keterangan,
                             nikPelapor = state.nikPelapor,
                             namaPelapor = state.namaPelapor,
-                            doc1 = state.docKk?.uri?.toString(),
-                            doc2 = state.docKtp?.uri?.toString(),
-                            docSelfie = state.docSelfie?.uri?.toString(),
+                            doc1 = finalRoomDoc1,
+                            doc2 = finalRoomDoc2,
+                            docSelfie = finalRoomDocSelfie,
                             createdAt = originalCreatedAt
                         )
 
-                        applicationRepository.updateApplication(updatedApp)
-                        _submitState.value = SubmitState.SUCCESS
-                        delay(800)
-                        _submissionResult.emit(true)
+                        var currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                        if (currentUuid.isNullOrEmpty()) {
+                            authRepository.validateSessionWithServer()
+                            currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                                ?: authRepository.getCurrentSupabaseSessionUserId()
+                        }
+
+                        if (!currentUuid.isNullOrBlank()) {
+                            val isRemoteUpdateSuccess = applicationRepository.updateDisabilitasApplicationRemoteWithDocuments(
+                                context = context,
+                                application = updatedApp,
+                                currentUuid = currentUuid,
+                                newDoc1 = newDoc1,
+                                newDoc2 = newDoc2,
+                                newDocSelfie = newDocSelfie
+                            )
+
+                            if (isRemoteUpdateSuccess) {
+                                _submitState.value = SubmitState.SUCCESS
+                                delay(800)
+                                _submissionResult.emit(true)
+                            } else {
+                                Log.e("SIAPEL_EDIT_DISABILITAS", "DISABILITAS remote update failed for code ${updatedApp.submissionCode}.")
+                                _submitState.value = SubmitState.ERROR
+                                delay(1000)
+                                _submitState.value = SubmitState.IDLE
+                                _submissionResult.emit(false)
+                            }
+                        } else {
+                            Log.e("SIAPEL_EDIT_DISABILITAS", "DISABILITAS remote update failed: UUID is null or blank.")
+                            _submitState.value = SubmitState.ERROR
+                            delay(1000)
+                            _submitState.value = SubmitState.IDLE
+                            _submissionResult.emit(false)
+                        }
                     } else {
+                        // CREATE MODE: ONLINE REMOTE FIRST, ROOM ONLY AFTER SUCCESS
                         val userSession = userPreferencesRepository.userSessionFlow.first()
+                        var currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                            ?: authRepository.getCurrentSupabaseSessionUserId()
+
+                        if (currentUuid.isNullOrEmpty()) {
+                            authRepository.validateSessionWithServer()
+                            currentUuid = authRepository.getCurrentSupabaseUser()?.id
+                                ?: authRepository.getCurrentSupabaseSessionUserId()
+                        }
+
                         if (userSession.isLoggedIn) {
                             val state = _uiState.value
                             val submissionCode = "DIS-${System.currentTimeMillis().toString().takeLast(6)}"
@@ -275,10 +340,34 @@ class DisabilitasViewModel(
                                 docSelfie = state.docSelfie?.uri?.toString()
                             )
 
-                            applicationRepository.insertApplication(application)
-                            _submitState.value = SubmitState.SUCCESS
-                            delay(800)
-                            _submissionResult.emit(true)
+                            if (!currentUuid.isNullOrBlank()) {
+                                val remoteSuccess = applicationRepository.createDisabilitasApplicationRemote(
+                                    context = context,
+                                    application = application,
+                                    currentSupabaseUuid = currentUuid,
+                                    doc1 = state.docKk,
+                                    doc2 = state.docKtp,
+                                    docSelfie = state.docSelfie
+                                )
+
+                                if (remoteSuccess) {
+                                    _submitState.value = SubmitState.SUCCESS
+                                    delay(800)
+                                    _submissionResult.emit(true)
+                                } else {
+                                    Log.e("SIAPEL_STORAGE", "DISABILITAS remote create failed. Local Room fallback skipped.")
+                                    _submitState.value = SubmitState.ERROR
+                                    delay(1000)
+                                    _submitState.value = SubmitState.IDLE
+                                    _submissionResult.emit(false)
+                                }
+                            } else {
+                                Log.e("SIAPEL_STORAGE", "DISABILITAS remote create failed: UUID is null or blank.")
+                                _submitState.value = SubmitState.ERROR
+                                delay(1000)
+                                _submitState.value = SubmitState.IDLE
+                                _submissionResult.emit(false)
+                            }
                         } else {
                             _submitState.value = SubmitState.ERROR
                             delay(1000)
@@ -287,6 +376,7 @@ class DisabilitasViewModel(
                         }
                     }
                 } catch (e: Exception) {
+                    Log.e("SIAPEL_STORAGE", "DISABILITAS submitForm exception: ${e.message}", e)
                     _submitState.value = SubmitState.ERROR
                     delay(1000)
                     _submitState.value = SubmitState.IDLE

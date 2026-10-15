@@ -10,10 +10,12 @@ import com.example.siapel.data.remote.dto.ApplicationWithKiaDetailRemoteDto
 import com.example.siapel.data.remote.dto.ApplicationWithKtpDetailRemoteDto
 import com.example.siapel.data.remote.dto.ApplicationWithKkDetailRemoteDto
 import com.example.siapel.data.remote.dto.ApplicationWithAktaDetailRemoteDto
+import com.example.siapel.data.remote.dto.ApplicationWithDisabilitasDetailRemoteDto
 import com.example.siapel.data.remote.dto.KiaDetailRemoteDto
 import com.example.siapel.data.remote.dto.KtpDetailRemoteDto
 import com.example.siapel.data.remote.dto.KkDetailRemoteDto
 import com.example.siapel.data.remote.dto.AktaDetailRemoteDto
+import com.example.siapel.data.remote.dto.DisabilitasDetailRemoteDto
 import com.example.siapel.model.ApplicationStatus
 import com.example.siapel.model.SelectedDocument
 import io.github.jan.supabase.exceptions.RestException
@@ -2785,6 +2787,577 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             Log.e(
                 storageTag,
                 "AKTA storage cleanup failed for folder $folderPath: ${storageEx.message}",
+                storageEx
+            )
+        }
+
+        return true
+    }
+
+    // ==========================================================
+    // REMOTE DISABILITAS SECTION (TAHAP DISABILITAS E)
+    // ==========================================================
+
+    private suspend fun cleanupRemoteDisabilitasApplication(submissionCode: String, currentUuid: String) {
+        try {
+            Log.d(TAG, "Attempting cleanup of remote DISABILITAS application row for code $submissionCode")
+            postgrest.from("applications").delete {
+                filter {
+                    eq("submission_code", submissionCode)
+                    eq("user_id", currentUuid)
+                    eq("service_type", "DISABILITAS")
+                }
+            }
+            Log.d(TAG, "Cleanup remote DISABILITAS application row success for code $submissionCode")
+        } catch (e: Exception) {
+            Log.e(TAG, "Cleanup remote DISABILITAS application row failed for code $submissionCode: ${e.message}")
+        }
+    }
+
+    private suspend fun uploadDisabilitasDocumentRemote(
+        context: Context,
+        selectedDocument: SelectedDocument,
+        currentUuid: String,
+        submissionCode: String,
+        documentSlot: String
+    ): Result<String> {
+        val storageTag = "SIAPEL_STORAGE"
+        Log.d(storageTag, "DISABILITAS upload start for slot $documentSlot, submissionCode $submissionCode")
+
+        val validSlots = listOf("doc1", "doc2", "docSelfie")
+        if (!validSlots.contains(documentSlot)) {
+            Log.e(storageTag, "upload failed: invalid DISABILITAS slot $documentSlot")
+            return Result.failure(Exception("Slot dokumen DISABILITAS tidak valid."))
+        }
+
+        val uri = selectedDocument.uri
+        if (uri == null) {
+            Log.e(storageTag, "upload failed: URI is null")
+            return Result.failure(Exception("File dokumen tidak ditemukan (URI null)."))
+        }
+
+        val displayName = selectedDocument.displayName
+        val rawMime = selectedDocument.mimeType
+
+        val extension = when {
+            rawMime?.contains("jpeg", true) == true || rawMime?.contains("jpg", true) == true -> "jpg"
+            rawMime?.contains("png", true) == true -> "png"
+            rawMime?.contains("pdf", true) == true -> "pdf"
+            rawMime?.contains("msword", true) == true -> "doc"
+            rawMime?.contains("wordprocessingml", true) == true -> "docx"
+            else -> displayName.substringAfterLast('.', "").lowercase()
+        }
+
+        val imageExtensions = listOf("jpg", "jpeg", "png")
+        val documentExtensions = listOf("pdf", "doc", "docx")
+
+        val maxSizeBytes = when {
+            imageExtensions.contains(extension) -> 5 * 1024 * 1024L
+            documentExtensions.contains(extension) -> 10 * 1024 * 1024L
+            else -> {
+                Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
+                return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
+            }
+        }
+
+        val sizeErrorMessage = if (imageExtensions.contains(extension)) {
+            "Ukuran gambar melebihi batas maksimal 5 MB."
+        } else {
+            "Ukuran dokumen melebihi batas maksimal 10 MB."
+        }
+
+        val rawSize = selectedDocument.fileSize
+        if (rawSize > maxSizeBytes) {
+            Log.e(storageTag, "upload failed: file size exceeds limit ($rawSize > $maxSizeBytes bytes)")
+            return Result.failure(Exception(sizeErrorMessage))
+        }
+
+        val fileBytes = try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                stream.readBytes()
+            }
+        } catch (e: Exception) {
+            Log.e(storageTag, "upload failed: unable to read Uri stream (${e.message})")
+            null
+        }
+
+        if (fileBytes == null || fileBytes.isEmpty()) {
+            Log.e(storageTag, "upload failed: file content is empty or unreadable")
+            return Result.failure(Exception("Gagal membaca berkas file."))
+        }
+
+        if (fileBytes.size > maxSizeBytes) {
+            Log.e(storageTag, "upload failed: read file size exceeds limit (${fileBytes.size} > $maxSizeBytes bytes)")
+            return Result.failure(Exception(sizeErrorMessage))
+        }
+
+        val targetPath = "$currentUuid/$submissionCode/${documentSlot}_${System.currentTimeMillis()}.$extension"
+        Log.d(storageTag, "target path: $targetPath")
+
+        return try {
+            val bucket = storage.from("siapel-documents")
+            bucket.upload(targetPath, fileBytes) {
+                upsert = false
+            }
+            Log.d(storageTag, "upload success for target path: $targetPath")
+            Result.success(targetPath)
+        } catch (e: Exception) {
+            Log.e(storageTag, "upload failed for target path $targetPath: ${e.message}", e)
+            Result.failure(Exception("Gagal mengunggah dokumen ke penyimpanan cloud: ${e.message}"))
+        }
+    }
+
+    suspend fun createDisabilitasApplicationRemote(
+        context: Context,
+        application: ApplicationEntity,
+        currentSupabaseUuid: String,
+        doc1: SelectedDocument? = null,
+        doc2: SelectedDocument? = null,
+        docSelfie: SelectedDocument? = null
+    ): Boolean {
+        Log.d(TAG, "DISABILITAS remote create start for code ${application.submissionCode}")
+
+        val validDisabilitasCategories = setOf("Biometric", "Perekaman KTP")
+
+        if (currentSupabaseUuid.isBlank()) {
+            Log.e(TAG, "DISABILITAS remote create failed: currentSupabaseUuid is blank")
+            return false
+        }
+
+        if (application.serviceType != "DISABILITAS") {
+            Log.e(TAG, "DISABILITAS remote create failed: invalid serviceType ${application.serviceType}")
+            return false
+        }
+
+        if (application.category !in validDisabilitasCategories) {
+            Log.e(TAG, "DISABILITAS remote create failed: invalid category ${application.category}")
+            return false
+        }
+
+        if (doc1 == null || doc2 == null || docSelfie == null) {
+            Log.e(TAG, "DISABILITAS remote create failed: one or more required documents null")
+            return false
+        }
+
+        if (application.submissionCode.isBlank()) {
+            Log.e(TAG, "DISABILITAS remote create failed: submissionCode is blank")
+            return false
+        }
+
+        var insertedAppId: String? = null
+        val uploadedPaths = mutableListOf<String>()
+
+        return try {
+            val appDto = ApplicationRemoteDto(
+                userId = currentSupabaseUuid,
+                serviceType = application.serviceType,
+                category = application.category,
+                submissionCode = application.submissionCode,
+                submissionDate = application.submissionDate,
+                status = application.status.name,
+                note = application.note,
+                nikPelapor = application.nikPelapor,
+                namaPelapor = application.namaPelapor,
+                email = application.email,
+                whatsapp = application.whatsapp,
+                kecamatan = application.kecamatan,
+                kelurahan = application.kelurahan,
+                keterangan = application.keterangan
+            )
+
+            val insertedApp = postgrest.from("applications").insert(appDto) {
+                select()
+            }.decodeSingle<ApplicationRemoteDto>()
+
+            val remoteAppId = insertedApp.id
+            if (remoteAppId.isNullOrEmpty()) {
+                Log.e(TAG, "DISABILITAS remote create failed: inserted application ID is null")
+                cleanupRemoteDisabilitasApplication(application.submissionCode, currentSupabaseUuid)
+                return false
+            }
+            insertedAppId = remoteAppId
+            Log.d(TAG, "DISABILITAS applications remote insert success id $remoteAppId")
+
+            val res1 = uploadDisabilitasDocumentRemote(context, doc1, currentSupabaseUuid, application.submissionCode, "doc1")
+            if (res1.isFailure) {
+                cleanupNewlyUploadedFiles(uploadedPaths)
+                cleanupRemoteDisabilitasApplication(application.submissionCode, currentSupabaseUuid)
+                return false
+            }
+            val doc1Path = res1.getOrThrow()
+            uploadedPaths.add(doc1Path)
+            Log.d(TAG, "DISABILITAS upload doc1 success path $doc1Path")
+
+            val res2 = uploadDisabilitasDocumentRemote(context, doc2, currentSupabaseUuid, application.submissionCode, "doc2")
+            if (res2.isFailure) {
+                cleanupNewlyUploadedFiles(uploadedPaths)
+                cleanupRemoteDisabilitasApplication(application.submissionCode, currentSupabaseUuid)
+                return false
+            }
+            val doc2Path = res2.getOrThrow()
+            uploadedPaths.add(doc2Path)
+            Log.d(TAG, "DISABILITAS upload doc2 success path $doc2Path")
+
+            val resSelfie = uploadDisabilitasDocumentRemote(context, docSelfie, currentSupabaseUuid, application.submissionCode, "docSelfie")
+            if (resSelfie.isFailure) {
+                cleanupNewlyUploadedFiles(uploadedPaths)
+                cleanupRemoteDisabilitasApplication(application.submissionCode, currentSupabaseUuid)
+                return false
+            }
+            val docSelfiePath = resSelfie.getOrThrow()
+            uploadedPaths.add(docSelfiePath)
+            Log.d(TAG, "DISABILITAS upload docSelfie success path $docSelfiePath")
+
+            val disabilitasDetailDto = DisabilitasDetailRemoteDto(
+                applicationId = remoteAppId,
+                doc1Path = doc1Path,
+                doc2Path = doc2Path,
+                docSelfiePath = docSelfiePath
+            )
+
+            try {
+                postgrest.from("disabilitas_detail").insert(disabilitasDetailDto)
+                Log.d(TAG, "DISABILITAS detail remote insert success")
+            } catch (e: Exception) {
+                Log.e(TAG, "DISABILITAS detail remote insert failed: ${e.message}", e)
+                cleanupNewlyUploadedFiles(uploadedPaths)
+                cleanupRemoteDisabilitasApplication(application.submissionCode, currentSupabaseUuid)
+                return false
+            }
+
+            applicationDao.insertApplication(application)
+            Log.d(TAG, "DISABILITAS Room insert success for code ${application.submissionCode}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "DISABILITAS remote create failed for code ${application.submissionCode}: ${e.message}", e)
+            cleanupNewlyUploadedFiles(uploadedPaths)
+            if (insertedAppId != null) {
+                cleanupRemoteDisabilitasApplication(application.submissionCode, currentSupabaseUuid)
+            }
+            false
+        }
+    }
+
+    suspend fun syncDisabilitasApplicationsRemote(currentUuid: String, localUserId: Int): Boolean {
+        Log.d(TAG, "DISABILITAS remote sync start")
+        return try {
+            val remoteApps = postgrest.from("applications").select(Columns.raw("*, disabilitas_detail(*)")) {
+                filter {
+                    eq("user_id", currentUuid)
+                    eq("service_type", "DISABILITAS")
+                }
+            }.decodeList<ApplicationWithDisabilitasDetailRemoteDto>()
+
+            Log.d(TAG, "DISABILITAS remote sync success count: ${remoteApps.size}")
+
+            for (dto in remoteApps) {
+                val existingLocal = applicationDao.getApplicationByCode(dto.submissionCode)
+                val statusEnum = try {
+                    ApplicationStatus.valueOf(dto.status)
+                } catch (_: Exception) {
+                    ApplicationStatus.SUBMITTED
+                }
+                val disabilitas = dto.disabilitasDetail
+
+                val entity = ApplicationEntity(
+                    id = existingLocal?.id ?: 0,
+                    userId = localUserId,
+                    serviceType = dto.serviceType,
+                    category = dto.category,
+                    submissionCode = dto.submissionCode,
+                    submissionDate = dto.submissionDate,
+                    status = statusEnum,
+                    note = dto.note ?: existingLocal?.note,
+                    kecamatan = dto.kecamatan,
+                    kelurahan = dto.kelurahan,
+                    email = dto.email,
+                    whatsapp = dto.whatsapp,
+                    keterangan = dto.keterangan,
+                    nikPelapor = dto.nikPelapor,
+                    namaPelapor = dto.namaPelapor,
+                    doc1 = existingLocal?.doc1 ?: disabilitas?.doc1Path,
+                    doc2 = existingLocal?.doc2 ?: disabilitas?.doc2Path,
+                    docSelfie = existingLocal?.docSelfie ?: disabilitas?.docSelfiePath,
+                    createdAt = existingLocal?.createdAt ?: System.currentTimeMillis()
+                )
+
+                if (existingLocal != null) {
+                    applicationDao.updateApplication(entity)
+                } else {
+                    applicationDao.insertApplication(entity)
+                }
+            }
+            Log.d(TAG, "Room sync success for DISABILITAS")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "DISABILITAS remote sync failed for user $currentUuid: ${e.message}", e)
+            false
+        }
+    }
+
+    suspend fun fetchDisabilitasDetailRemote(
+        submissionCode: String,
+        currentUuid: String
+    ): Result<DisabilitasDetailRemoteDto> {
+        if (submissionCode.isBlank() || currentUuid.isBlank()) {
+            return Result.failure(Exception("Parameter fetch detail DISABILITAS tidak valid."))
+        }
+        Log.d(TAG, "DISABILITAS fetch detail start for code $submissionCode")
+        return try {
+            val dto = postgrest.from("applications").select(Columns.raw("*, disabilitas_detail(*)")) {
+                filter {
+                    eq("submission_code", submissionCode)
+                    eq("user_id", currentUuid)
+                    eq("service_type", "DISABILITAS")
+                }
+            }.decodeSingle<ApplicationWithDisabilitasDetailRemoteDto>()
+
+            val disabilitasDetail = dto.disabilitasDetail
+            if (disabilitasDetail != null) {
+                Log.d(TAG, "DISABILITAS fetch detail success for code $submissionCode")
+                Result.success(disabilitasDetail)
+            } else {
+                Log.e(TAG, "DISABILITAS fetch detail failed: disabilitas_detail is null")
+                Result.failure(Exception("Detail dokumen DISABILITAS belum tersedia."))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "DISABILITAS fetch detail failed for code $submissionCode: ${e.message}", e)
+            Result.failure(Exception("Gagal mengambil detail dokumen DISABILITAS dari server: ${e.message}"))
+        }
+    }
+
+    fun getDisabilitasDocumentPathBySlot(
+        disabilitasDetail: DisabilitasDetailRemoteDto,
+        documentSlot: String
+    ): Result<String> {
+        val validSlots = listOf("doc1", "doc2", "docSelfie")
+        if (!validSlots.contains(documentSlot)) {
+            return Result.failure(Exception("Slot dokumen DISABILITAS tidak valid."))
+        }
+
+        val path = when (documentSlot) {
+            "doc1" -> disabilitasDetail.doc1Path
+            "doc2" -> disabilitasDetail.doc2Path
+            "docSelfie" -> disabilitasDetail.docSelfiePath
+            else -> null
+        }
+
+        return if (!path.isNullOrBlank()) {
+            Result.success(path)
+        } else {
+            Result.failure(Exception("Dokumen DISABILITAS belum tersedia."))
+        }
+    }
+
+    suspend fun updateDisabilitasApplicationRemoteWithDocuments(
+        context: Context,
+        application: ApplicationEntity,
+        currentUuid: String,
+
+        newDoc1: SelectedDocument? = null,
+        newDoc2: SelectedDocument? = null,
+        newDocSelfie: SelectedDocument? = null
+    ): Boolean {
+        val editTag = "SIAPEL_EDIT_DISABILITAS"
+        Log.d(editTag, "DISABILITAS remote update start for code ${application.submissionCode}")
+
+        val validDisabilitasCategories = setOf("Biometric", "Perekaman KTP")
+
+        if (currentUuid.isBlank()) {
+            Log.e(editTag, "DISABILITAS remote update failed: currentUuid is blank")
+            return false
+        }
+
+        if (application.serviceType != "DISABILITAS") {
+            Log.e(editTag, "DISABILITAS remote update failed: invalid serviceType ${application.serviceType}")
+            return false
+        }
+
+        if (application.category !in validDisabilitasCategories) {
+            Log.e(editTag, "DISABILITAS remote update failed: invalid category ${application.category}")
+            return false
+        }
+
+        val newlyUploadedPaths = mutableListOf<String>()
+
+        return try {
+            val oldDetailResult = fetchDisabilitasDetailRemote(application.submissionCode, currentUuid)
+            if (oldDetailResult.isFailure) {
+                Log.e(editTag, "DISABILITAS fetch old detail failed for code ${application.submissionCode}")
+                return false
+            }
+            val oldDetail = oldDetailResult.getOrThrow()
+
+            val oldDoc1Path = oldDetail.doc1Path
+            val oldDoc2Path = oldDetail.doc2Path
+            val oldDocSelfiePath = oldDetail.docSelfiePath
+
+            val isDoc1Replaced = isNewSelectedDocument(newDoc1)
+            val isDoc2Replaced = isNewSelectedDocument(newDoc2)
+            val isDocSelfieReplaced = isNewSelectedDocument(newDocSelfie)
+
+            val finalDoc1Path = if (isDoc1Replaced) {
+                val uploadRes = uploadDisabilitasDocumentRemote(context, newDoc1!!, currentUuid, application.submissionCode, "doc1")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else {
+                oldDoc1Path
+            }
+
+            val finalDoc2Path = if (isDoc2Replaced) {
+                val uploadRes = uploadDisabilitasDocumentRemote(context, newDoc2!!, currentUuid, application.submissionCode, "doc2")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else {
+                oldDoc2Path
+            }
+
+            val finalDocSelfiePath = if (isDocSelfieReplaced) {
+                val uploadRes = uploadDisabilitasDocumentRemote(context, newDocSelfie!!, currentUuid, application.submissionCode, "docSelfie")
+                if (uploadRes.isFailure) {
+                    cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                    return false
+                }
+                val path = uploadRes.getOrThrow()
+                newlyUploadedPaths.add(path)
+                path
+            } else {
+                oldDocSelfiePath
+            }
+
+            if (finalDoc1Path.isNullOrBlank() || finalDoc2Path.isNullOrBlank() || finalDocSelfiePath.isNullOrBlank()) {
+                Log.e(editTag, "DISABILITAS update failed: one or more required final document paths are null or blank")
+                cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                return false
+            }
+
+            val appDto = ApplicationRemoteDto(
+                userId = currentUuid,
+                serviceType = application.serviceType,
+                category = application.category,
+                submissionCode = application.submissionCode,
+                submissionDate = application.submissionDate,
+                status = application.status.name,
+                note = application.note,
+                nikPelapor = application.nikPelapor,
+                namaPelapor = application.namaPelapor,
+                email = application.email,
+                whatsapp = application.whatsapp,
+                kecamatan = application.kecamatan,
+                kelurahan = application.kelurahan,
+                keterangan = application.keterangan
+            )
+
+            val updatedApp = postgrest.from("applications").update(appDto) {
+                filter {
+                    eq("submission_code", application.submissionCode)
+                    eq("user_id", currentUuid)
+                    eq("service_type", "DISABILITAS")
+                }
+                select()
+            }.decodeSingle<ApplicationRemoteDto>()
+
+            val remoteAppId = updatedApp.id
+            if (remoteAppId.isNullOrEmpty()) {
+                Log.e(editTag, "DISABILITAS applications update failed: remoteAppId null")
+                cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                return false
+            }
+
+            val disabilitasDetailDto = DisabilitasDetailRemoteDto(
+                applicationId = remoteAppId,
+                doc1Path = finalDoc1Path,
+                doc2Path = finalDoc2Path,
+                docSelfiePath = finalDocSelfiePath
+            )
+
+            try {
+                postgrest.from("disabilitas_detail").update(disabilitasDetailDto) {
+                    filter {
+                        eq("application_id", remoteAppId)
+                    }
+                }
+                Log.d(editTag, "DISABILITAS detail remote update success for code ${application.submissionCode}")
+            } catch (e: Exception) {
+                Log.e(editTag, "DISABILITAS detail remote update failed: ${e.message}", e)
+                cleanupNewlyUploadedFiles(newlyUploadedPaths)
+                return false
+            }
+
+            if (isDoc1Replaced && !oldDoc1Path.isNullOrBlank() && oldDoc1Path != finalDoc1Path) {
+                deleteSingleStorageFileBestEffort(oldDoc1Path, "doc1", editTag)
+            }
+            if (isDoc2Replaced && !oldDoc2Path.isNullOrBlank() && oldDoc2Path != finalDoc2Path) {
+                deleteSingleStorageFileBestEffort(oldDoc2Path, "doc2", editTag)
+            }
+            if (isDocSelfieReplaced && !oldDocSelfiePath.isNullOrBlank() && oldDocSelfiePath != finalDocSelfiePath) {
+                deleteSingleStorageFileBestEffort(oldDocSelfiePath, "docSelfie", editTag)
+            }
+
+            applicationDao.updateApplication(application)
+            Log.d(editTag, "DISABILITAS remote update success for code ${application.submissionCode}")
+            true
+        } catch (e: Exception) {
+            Log.e(editTag, "DISABILITAS remote update failed for code ${application.submissionCode}: ${e.message}", e)
+            cleanupNewlyUploadedFiles(newlyUploadedPaths)
+            false
+        }
+    }
+
+    suspend fun deleteDisabilitasApplicationRemote(
+        submissionCode: String,
+        currentSupabaseUuid: String
+    ): Boolean {
+        if (submissionCode.isBlank() || currentSupabaseUuid.isBlank()) {
+            Log.e(TAG, "DISABILITAS remote delete failed: submissionCode or currentSupabaseUuid is blank")
+            return false
+        }
+        Log.d(TAG, "DISABILITAS remote delete start for code $submissionCode")
+        val isDbDeleteSuccess = try {
+            postgrest.from("applications").delete {
+                filter {
+                    eq("submission_code", submissionCode)
+                    eq("user_id", currentSupabaseUuid)
+                    eq("service_type", "DISABILITAS")
+                }
+            }
+            Log.d(TAG, "DISABILITAS remote delete success for code $submissionCode")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "DISABILITAS remote delete failed for code $submissionCode: ${e.message}", e)
+            false
+        }
+
+        if (!isDbDeleteSuccess) return false
+
+        val storageTag = "SIAPEL_STORAGE"
+        val folderPath = "$currentSupabaseUuid/$submissionCode"
+        Log.d(storageTag, "DISABILITAS storage cleanup start for folder $folderPath")
+
+        try {
+            val bucket = storage.from("siapel-documents")
+            val files = bucket.list(folderPath)
+            if (files.isNotEmpty()) {
+                val fullPaths = files.map { file -> "$folderPath/${file.name}" }
+                bucket.delete(fullPaths)
+                Log.d(storageTag, "DISABILITAS storage cleanup success for folder $folderPath")
+            } else {
+                Log.d(storageTag, "DISABILITAS storage cleanup skipped: folder empty for $folderPath")
+            }
+        } catch (storageEx: Exception) {
+            Log.e(
+                storageTag,
+                "DISABILITAS storage cleanup failed for folder $folderPath: ${storageEx.message}",
                 storageEx
             )
         }

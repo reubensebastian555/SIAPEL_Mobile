@@ -12,9 +12,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -49,6 +51,7 @@ fun DisabilitasFormScreen(
     val submitState by viewModel.submitState
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         viewModel.submissionResult.collect { success ->
@@ -213,6 +216,7 @@ fun DisabilitasFormScreen(
                         value = uiState.nikPelapor,
                         onValueChange = { viewModel.onNikPelaporChange(it) },
                         placeholder = "Masukkan 16 digit NIK pelapor",
+                        leadingIcon = Icons.Default.Badge,
                         keyboardType = KeyboardType.Number
                     )
                     uiState.nikPelaporError?.let { ErrorText(it) }
@@ -222,7 +226,8 @@ fun DisabilitasFormScreen(
                     SiapelTextField(
                         value = uiState.namaPelapor,
                         onValueChange = { viewModel.onNamaPelaporChange(it) },
-                        placeholder = "Masukkan nama lengkap pelapor"
+                        placeholder = "Masukkan nama lengkap pelapor",
+                        leadingIcon = Icons.Default.Person
                     )
                     uiState.namaPelaporError?.let { ErrorText(it) }
                 }
@@ -272,7 +277,7 @@ fun DisabilitasFormScreen(
                 SiapelPrimaryButton(
                     text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
                     onClick = {
-                        viewModel.submitForm()
+                        viewModel.submitForm(context)
                     },
                     submitState = submitState,
                     loadingText = if (isEditMode) "Menyimpan perubahan" else "Mengirim pengajuan",
