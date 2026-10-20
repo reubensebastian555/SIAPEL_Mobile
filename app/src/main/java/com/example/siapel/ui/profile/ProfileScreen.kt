@@ -326,9 +326,9 @@ fun UserInfoCard(user: UserProfile) {
                 }
             )
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-            InfoRow(Icons.Default.LocationCity, "Kecamatan", user.kecamatan)
+            InfoRow(Icons.Default.LocationCity, "Kecamatan", user.kecamatan.uppercase())
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
-            InfoRow(Icons.Default.HomeWork, "Kelurahan", user.kelurahan)
+            InfoRow(Icons.Default.HomeWork, "Kelurahan", user.kelurahan.uppercase())
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
             InfoRow(Icons.Default.Email, "Email", user.email)
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))

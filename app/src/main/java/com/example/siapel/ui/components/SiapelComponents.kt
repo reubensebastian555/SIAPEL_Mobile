@@ -52,6 +52,7 @@ import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.ui.text.style.TextOverflow
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.ui.draw.clip
 
 @Composable
@@ -183,7 +184,8 @@ fun SiapelDropdown(
     onOptionSelected: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    displayText: ((String) -> String)? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -192,8 +194,10 @@ fun SiapelDropdown(
         onExpandedChange = { if (enabled) expanded = !expanded },
         modifier = modifier.fillMaxWidth()
     ) {
+        val displayedValue = if (displayText != null && selectedValue.isNotEmpty()) displayText(selectedValue) else selectedValue
+
         OutlinedTextField(
-            value = selectedValue,
+            value = displayedValue,
             onValueChange = {},
             readOnly = true,
             label = { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -223,8 +227,9 @@ fun SiapelDropdown(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         ) {
             options.forEach { option ->
+                val optionDisplay = if (displayText != null) displayText(option) else option
                 DropdownMenuItem(
-                    text = { Text(text = option, color = MaterialTheme.colorScheme.onSurface) },
+                    text = { Text(text = optionDisplay, color = MaterialTheme.colorScheme.onSurface) },
                     onClick = {
                         onOptionSelected(option)
                         expanded = false
@@ -536,6 +541,19 @@ fun getDocumentMetadata(context: Context, uri: Uri): Triple<String, Long, String
             displayName = path.substring(cut + 1)
         }
     }
+    if (size <= 0L) {
+        try {
+            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
+                size = afd.length
+            }
+        } catch (_: Exception) {
+            try {
+                if (uri.scheme == "file" && uri.path != null) {
+                    size = File(uri.path!!).length()
+                }
+            } catch (_: Exception) {}
+        }
+    }
     return Triple(displayName, size, mimeType)
 }
 
@@ -561,6 +579,54 @@ fun getFileFormatLabel(displayName: String, mimeType: String?): String {
     }
 }
 
+const val MAX_FILE_SIZE_BYTES = 2L * 1024L * 1024L // 2 MB
+
+private fun processAndValidateSelectedDocument(
+    context: Context,
+    uri: Uri,
+    onDocumentSelected: (SelectedDocument) -> Unit,
+    onErrorChanged: (String?) -> Unit
+) {
+    val (name, size, mime) = getDocumentMetadata(context, uri)
+    if (size > MAX_FILE_SIZE_BYTES) {
+        onErrorChanged("Ukuran file Maksimal hanya 2 MB")
+    } else {
+        onErrorChanged(null)
+        onDocumentSelected(SelectedDocument(uri, name, size, mime, UploadState.READY, null))
+    }
+}
+
+@Composable
+fun SiapelInfoCard(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Info,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = text,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.primary,
+                lineHeight = 18.sp
+            )
+        }
+    }
+}
+
 @Composable
 fun SiapelDocumentPicker(
     title: String,
@@ -573,29 +639,27 @@ fun SiapelDocumentPicker(
     var showSourceSheet by remember { mutableStateOf(false) }
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
     var showImagePreview by remember { mutableStateOf(false) }
+    var fileSizeError by remember { mutableStateOf<String?>(null) }
 
     val isImage = selectedDoc?.mimeType?.contains("image", true) == true ||
             selectedDoc?.displayName?.matches(Regex(".*\\.(jpg|jpeg|png)", RegexOption.IGNORE_CASE)) == true
 
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
-            val (name, size, mime) = getDocumentMetadata(context, it)
-            onDocumentSelected(SelectedDocument(it, name, size, mime, UploadState.READY, null))
+            processAndValidateSelectedDocument(context, it, onDocumentSelected) { err -> fileSizeError = err }
         }
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let {
-            val (name, size, mime) = getDocumentMetadata(context, it)
-            onDocumentSelected(SelectedDocument(it, name, size, mime, UploadState.READY, null))
+            processAndValidateSelectedDocument(context, it, onDocumentSelected) { err -> fileSizeError = err }
         }
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
             tempCameraUri?.let { uri ->
-                val (name, size, mime) = getDocumentMetadata(context, uri)
-                onDocumentSelected(SelectedDocument(uri, name, size, mime, UploadState.READY, null))
+                processAndValidateSelectedDocument(context, uri, onDocumentSelected) { err -> fileSizeError = err }
             }
         }
     }
@@ -800,6 +864,23 @@ fun SiapelDocumentPicker(
                                 }
                                 UploadState.READY -> {}
                             }
+
+                            if (fileSizeError != null) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = fileSizeError!!,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        } else if (fileSizeError != null) {
+                            Text(
+                                text = fileSizeError!!,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.error
+                            )
                         } else {
                             Text(
                                 text = "Belum ada file dipilih",
@@ -856,7 +937,10 @@ fun SiapelDocumentPicker(
                     }
 
                     IconButton(
-                        onClick = onClearFile,
+                        onClick = {
+                            fileSizeError = null
+                            onClearFile()
+                        },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(

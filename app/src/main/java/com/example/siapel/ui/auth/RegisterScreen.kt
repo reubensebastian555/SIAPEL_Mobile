@@ -137,7 +137,8 @@ fun RegisterScreen(
                     selectedValue = state.kecamatan,
                     options = WilayahData.daftarKecamatan,
                     onOptionSelected = { viewModel.onKecamatanChanged(it) },
-                    placeholder = "Pilih Kecamatan Anda"
+                    placeholder = "Pilih Kecamatan Anda",
+                    displayText = { it.uppercase() }
                 )
             }
 
@@ -150,7 +151,8 @@ fun RegisterScreen(
                     options = kelurahanOptions,
                     onOptionSelected = { viewModel.onKelurahanChanged(it) },
                     placeholder = if (state.kecamatan.isEmpty()) "Pilih kecamatan dahulu" else "Pilih kelurahan Anda",
-                    enabled = state.kecamatan.isNotEmpty()
+                    enabled = state.kecamatan.isNotEmpty(),
+                    displayText = { it.uppercase() }
                 )
             }
 

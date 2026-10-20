@@ -207,8 +207,8 @@ fun StatusDetailScreen(
                             DetailItem(label = "Nama Pelapor", value = application.namaPelapor)
                             DetailItem(label = "Email", value = application.email)
                             DetailItem(label = "Nomor WhatsApp", value = application.whatsapp)
-                            DetailItem(label = "Kecamatan", value = application.kecamatan)
-                            DetailItem(label = "Kelurahan", value = application.kelurahan)
+                            DetailItem(label = "Kecamatan", value = application.kecamatan.uppercase())
+                            DetailItem(label = "Kelurahan", value = application.kelurahan.uppercase())
                         }
                     }
                 }

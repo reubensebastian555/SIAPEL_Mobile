@@ -191,23 +191,14 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             else -> displayName.substringAfterLast('.', "").lowercase()
         }
 
-        val imageExtensions = listOf("jpg", "jpeg", "png")
-        val documentExtensions = listOf("pdf", "doc", "docx")
-
-        val maxSizeBytes = when {
-            imageExtensions.contains(extension) -> 5 * 1024 * 1024L
-            documentExtensions.contains(extension) -> 10 * 1024 * 1024L
-            else -> {
-                Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
-                return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
-            }
+        val allowedExtensions = listOf("jpg", "jpeg", "png", "pdf", "doc", "docx")
+        if (!allowedExtensions.contains(extension)) {
+            Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
+            return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
         }
 
-        val sizeErrorMessage = if (imageExtensions.contains(extension)) {
-            "Ukuran gambar melebihi batas maksimal 5 MB."
-        } else {
-            "Ukuran dokumen melebihi batas maksimal 10 MB."
-        }
+        val maxSizeBytes = 2 * 1024 * 1024L
+        val sizeErrorMessage = "Ukuran file Maksimal hanya 2 MB"
 
         val rawSize = selectedDocument.fileSize
         if (rawSize > maxSizeBytes) {
@@ -289,23 +280,14 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             else -> displayName.substringAfterLast('.', "").lowercase()
         }
 
-        val imageExtensions = listOf("jpg", "jpeg", "png")
-        val documentExtensions = listOf("pdf", "doc", "docx")
-
-        val maxSizeBytes = when {
-            imageExtensions.contains(extension) -> 5 * 1024 * 1024L
-            documentExtensions.contains(extension) -> 10 * 1024 * 1024L
-            else -> {
-                Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
-                return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
-            }
+        val allowedExtensions = listOf("jpg", "jpeg", "png", "pdf", "doc", "docx")
+        if (!allowedExtensions.contains(extension)) {
+            Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
+            return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
         }
 
-        val sizeErrorMessage = if (imageExtensions.contains(extension)) {
-            "Ukuran gambar melebihi batas maksimal 5 MB."
-        } else {
-            "Ukuran dokumen melebihi batas maksimal 10 MB."
-        }
+        val maxSizeBytes = 2 * 1024 * 1024L
+        val sizeErrorMessage = "Ukuran file Maksimal hanya 2 MB"
 
         val rawSize = selectedDocument.fileSize
         if (rawSize > maxSizeBytes) {
@@ -1955,23 +1937,14 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             else -> displayName.substringAfterLast('.', "").lowercase()
         }
 
-        val imageExtensions = listOf("jpg", "jpeg", "png")
-        val documentExtensions = listOf("pdf", "doc", "docx")
-
-        val maxSizeBytes = when {
-            imageExtensions.contains(extension) -> 5 * 1024 * 1024L
-            documentExtensions.contains(extension) -> 10 * 1024 * 1024L
-            else -> {
-                Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
-                return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
-            }
+        val allowedExtensions = listOf("jpg", "jpeg", "png", "pdf", "doc", "docx")
+        if (!allowedExtensions.contains(extension)) {
+            Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
+            return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
         }
 
-        val sizeErrorMessage = if (imageExtensions.contains(extension)) {
-            "Ukuran gambar melebihi batas maksimal 5 MB."
-        } else {
-            "Ukuran dokumen melebihi batas maksimal 10 MB."
-        }
+        val maxSizeBytes = 2 * 1024 * 1024L
+        val sizeErrorMessage = "Ukuran file Maksimal hanya 2 MB"
 
         val rawSize = selectedDocument.fileSize
         if (rawSize > maxSizeBytes) {
@@ -2848,23 +2821,14 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             else -> displayName.substringAfterLast('.', "").lowercase()
         }
 
-        val imageExtensions = listOf("jpg", "jpeg", "png")
-        val documentExtensions = listOf("pdf", "doc", "docx")
-
-        val maxSizeBytes = when {
-            imageExtensions.contains(extension) -> 5 * 1024 * 1024L
-            documentExtensions.contains(extension) -> 10 * 1024 * 1024L
-            else -> {
-                Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
-                return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
-            }
+        val allowedExtensions = listOf("jpg", "jpeg", "png", "pdf", "doc", "docx")
+        if (!allowedExtensions.contains(extension)) {
+            Log.e(storageTag, "upload failed: invalid extension or mime ($extension / $rawMime)")
+            return Result.failure(Exception("Format file tidak didukung. Gunakan JPG, PNG, PDF, DOC, atau DOCX."))
         }
 
-        val sizeErrorMessage = if (imageExtensions.contains(extension)) {
-            "Ukuran gambar melebihi batas maksimal 5 MB."
-        } else {
-            "Ukuran dokumen melebihi batas maksimal 10 MB."
-        }
+        val maxSizeBytes = 2 * 1024 * 1024L
+        val sizeErrorMessage = "Ukuran file Maksimal hanya 2 MB"
 
         val rawSize = selectedDocument.fileSize
         if (rawSize > maxSizeBytes) {

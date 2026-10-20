@@ -37,6 +37,7 @@ import com.example.siapel.ui.components.SiapelDropdown
 import com.example.siapel.ui.components.SiapelPrimaryButton
 import com.example.siapel.ui.components.SiapelTextField
 import com.example.siapel.ui.components.SiapelDocumentPicker
+import com.example.siapel.ui.components.SiapelInfoCard
 import com.example.siapel.ui.theme.Border
 import com.example.siapel.ui.theme.PrimaryBlue
 import com.example.siapel.ui.theme.PrimaryNavy
@@ -156,7 +157,8 @@ fun KkFormScreen(
                         selectedValue = uiState.kecamatan,
                         options = WilayahData.daftarKecamatan,
                         onOptionSelected = { viewModel.onKecamatanChange(it) },
-                        placeholder = "Pilih kecamatan"
+                        placeholder = "Pilih kecamatan",
+                        displayText = { it.uppercase() }
                     )
                     uiState.kecamatanError?.let { ErrorText(it) }
 
@@ -168,7 +170,8 @@ fun KkFormScreen(
                         options = WilayahData.getKelurahan(uiState.kecamatan),
                         onOptionSelected = { viewModel.onKelurahanChange(it) },
                         placeholder = "Pilih kelurahan",
-                        enabled = uiState.kecamatan.isNotEmpty()
+                        enabled = uiState.kecamatan.isNotEmpty(),
+                        displayText = { it.uppercase() }
                     )
                     uiState.kelurahanError?.let { ErrorText(it) }
 
@@ -305,6 +308,10 @@ fun KkFormScreen(
             // SECTION 5 — DOKUMEN PERSYARATAN
             item {
                 FormSection(title = "Dokumen Persyaratan (Unggah sesuai kebutuhan layanan)") {
+                    SiapelInfoCard(
+                        text = "Harap sesuaikan ukuran file yang akan diunggah. Maksimal ukuran file hanya 2 MB.",
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
                     SiapelDocumentPicker(
                         title = "Kartu Keluarga Terbaru",
                         subtitle = "Unggah file KK terbaru",

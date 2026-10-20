@@ -142,7 +142,8 @@ fun AktaKelahiranFormScreen(
                         selectedValue = uiState.kecamatan,
                         options = WilayahData.daftarKecamatan,
                         onOptionSelected = { viewModel.updateKecamatan(it) },
-                        placeholder = "Pilih Kecamatan"
+                        placeholder = "Pilih Kecamatan",
+                        displayText = { it.uppercase() }
                     )
                     uiState.kecamatanError?.let { ErrorText(it) }
 
@@ -154,7 +155,8 @@ fun AktaKelahiranFormScreen(
                         options = if (uiState.kecamatan.isNotEmpty()) WilayahData.getKelurahan(uiState.kecamatan) else emptyList(),
                         onOptionSelected = { viewModel.updateKelurahan(it) },
                         placeholder = "Pilih Kelurahan",
-                        enabled = uiState.kecamatan.isNotEmpty()
+                        enabled = uiState.kecamatan.isNotEmpty(),
+                        displayText = { it.uppercase() }
                     )
                     uiState.kelurahanError?.let { ErrorText(it) }
 
@@ -287,6 +289,10 @@ fun AktaKelahiranFormScreen(
             if (uiState.kategoriLayanan.isNotEmpty()) {
                 item {
                     FormSection(title = "Dokumen Persyaratan") {
+                        SiapelInfoCard(
+                            text = "Harap sesuaikan ukuran file yang akan diunggah. Maksimal ukuran file hanya 2 MB.",
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
                         SiapelDocumentPicker(
                             title = "Upload Kartu Keluarga Terbaru",
                             subtitle = "Pilih file Kartu Keluarga",
