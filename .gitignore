@@ -13,3 +13,4 @@
 .externalNativeBuild
 .cxx
 local.properties
+/local.properties.cloud.bak
