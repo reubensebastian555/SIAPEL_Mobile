@@ -36,6 +36,7 @@ class AuthRepository(private val userDao: UserDao) {
             Log.d(TAG, "Starting register for email: ${user.email}")
 
             // 1. Register via Supabase Auth with full metadata for database trigger
+            // AUTH API [POST] - Mendaftarkan akun pengguna baru via Supabase Auth
             authPlugin.signUpWith(Email) {
                 email = user.email
                 password = rawPassword
@@ -81,6 +82,7 @@ class AuthRepository(private val userDao: UserDao) {
 
     private suspend fun fetchOnlineProfile(uuid: String): ProfileRemoteDto? {
         return try {
+            // REST API [GET] - Mengambil data profil pengguna dari PostgREST
             postgrest.from("profiles").select {
                 filter {
                     eq("user_id", uuid)
@@ -97,6 +99,7 @@ class AuthRepository(private val userDao: UserDao) {
             Log.d(TAG, "Starting login for email: $email")
 
             // 1. Login via Supabase Auth
+            // AUTH API [POST] - Autentikasi dan login pengguna via Supabase Auth
             authPlugin.signInWith(Email) {
                 this.email = email
                 this.password = passwordRaw
@@ -165,6 +168,7 @@ class AuthRepository(private val userDao: UserDao) {
 
     suspend fun logout(): Result<Unit> {
         return try {
+            // AUTH API [POST] - Mengakhiri sesi login pengguna via Supabase Auth
             authPlugin.signOut()
             _cachedProfile.value = null
             _cachedUserEntity.value = null
@@ -185,6 +189,7 @@ class AuthRepository(private val userDao: UserDao) {
     suspend fun validateSessionWithServer(): Boolean {
         val session = authPlugin.currentSessionOrNull() ?: return false
         return try {
+            // AUTH API [GET] - Memvalidasi dan memperbarui sesi pengguna via Supabase Auth
             val user = authPlugin.retrieveUserForCurrentSession(updateSession = true)
             if (user != null) {
                 Log.d(TAG, "validateSessionWithServer success for UUID: ${user.id}")

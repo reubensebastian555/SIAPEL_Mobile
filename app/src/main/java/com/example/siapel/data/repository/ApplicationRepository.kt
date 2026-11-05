@@ -78,6 +78,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     private suspend fun cleanupRemoteApplication(submissionCode: String, currentUuid: String) {
         try {
             Log.d(TAG, "Attempting cleanup of remote application row for code $submissionCode")
+            // REST API [DELETE] - Membersihkan baris data pengajuan dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -93,6 +94,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     private suspend fun cleanupRemoteAktaApplication(submissionCode: String, currentUuid: String) {
         try {
             Log.d(TAG, "Attempting cleanup of remote AKTA application row for code $submissionCode")
+            // REST API [DELETE] - Membersihkan baris data pengajuan AKTA dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -111,6 +113,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         val editTag = "SIAPEL_EDIT"
         try {
             Log.d(editTag, "cleaning up newly uploaded files due to failure: ${paths.size} files")
+            // STORAGE API [DELETE] - Menghapus dokumen lampiran baru yang gagal diproses dari bucket siapel-documents
             storage.from("siapel-documents").delete(paths)
             Log.d(editTag, "cleanup newly uploaded files success")
         } catch (e: Exception) {
@@ -121,6 +124,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     private suspend fun deleteSingleStorageFileBestEffort(oldPath: String, slot: String, tag: String) {
         try {
             Log.d(tag, "deleting old file for slot $slot: $oldPath")
+            // STORAGE API [DELETE] - Menghapus dokumen lama dari bucket siapel-documents
             storage.from("siapel-documents").delete(listOf(oldPath))
             Log.d(tag, "delete old file success for slot $slot")
         } catch (e: Exception) {
@@ -145,6 +149,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
 
         return try {
             val bucket = storage.from("siapel-documents")
+            // STORAGE API - Membuat Signed URL untuk mengunduh/melihat dokumen privat dari bucket siapel-documents
             val signedUrl = bucket.createSignedUrl(
                 path = storagePath,
                 expiresIn = 300.seconds
@@ -232,6 +237,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
 
         return try {
             val bucket = storage.from("siapel-documents")
+            // STORAGE API - Mengunggah dokumen lampiran ke bucket siapel-documents
             bucket.upload(targetPath, fileBytes) {
                 upsert = false
             }
@@ -319,6 +325,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
 
         return try {
             val bucket = storage.from("siapel-documents")
+            // STORAGE API - Mengunggah dokumen lampiran KK ke bucket siapel-documents
             bucket.upload(targetPath, fileBytes) {
                 upsert = false
             }
@@ -340,6 +347,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     ): Result<KiaDetailRemoteDto> {
         Log.d(TAG, "remote kia_detail fetch start for submissionCode $submissionCode")
         return try {
+            // REST API [GET] - Mengambil detail pengajuan KIA beserta relasi kia_detail dari PostgREST
             val dto = postgrest.from("applications").select(Columns.raw("*, kia_detail(*)")) {
                 filter {
                     eq("submission_code", submissionCode)
@@ -416,6 +424,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [POST] - Menambahkan data pengajuan KIA baru ke tabel applications via PostgREST
             val insertedApp = postgrest.from("applications").insert(appDto) {
                 select()
             }.decodeSingle<ApplicationRemoteDto>()
@@ -478,6 +487,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 docSelfiePath = docSelfiePath
             )
             try {
+                // REST API [POST] - Menambahkan detail KIA ke tabel kia_detail via PostgREST
                 postgrest.from("kia_detail").insert(kiaDetailDto)
                 Log.d(TAG, "Kia detail remote insert success for application ID $remoteAppId with storage paths")
             } catch (_: Exception) {
@@ -500,6 +510,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     suspend fun syncKiaApplicationsRemote(currentUuid: String, localUserId: Int): Boolean {
         Log.d(TAG, "Remote sync start for user $currentUuid")
         return try {
+            // REST API [GET] - Mengambil daftar pengajuan KIA pengguna dari PostgREST
             val remoteApps = postgrest.from("applications").select(Columns.raw("*, kia_detail(*)")) {
                 filter {
                     eq("user_id", currentUuid)
@@ -667,6 +678,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [PATCH] - Memperbarui data pengajuan KIA pada tabel applications via PostgREST
             val updatedApp = postgrest.from("applications").update(appDto) {
                 filter {
                     eq("submission_code", application.submissionCode)
@@ -691,6 +703,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 docSelfiePath = finalDocSelfiePath
             )
             try {
+                // REST API [PATCH] - Memperbarui detail KIA pada tabel kia_detail via PostgREST
                 postgrest.from("kia_detail").update(kiaDetailDto) {
                     filter {
                         eq("application_id", remoteAppId)
@@ -741,6 +754,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [PATCH] - Memperbarui data pengajuan KIA (tanpa dokumen) pada tabel applications via PostgREST
             val updatedApp = postgrest.from("applications").update(appDto) {
                 filter {
                     eq("submission_code", application.submissionCode)
@@ -758,6 +772,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 namaAnak = application.namaAnak?.ifEmpty { null }
             )
             try {
+                // REST API [PATCH] - Memperbarui detail KIA (tanpa dokumen) pada tabel kia_detail via PostgREST
                 postgrest.from("kia_detail").update(kiaDetailDto) {
                     filter {
                         eq("application_id", remoteAppId)
@@ -776,6 +791,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
 
     suspend fun deleteKiaApplicationRemote(submissionCode: String, currentSupabaseUuid: String): Boolean {
         val isDbDeleteSuccess = try {
+            // REST API [DELETE] - Menghapus pengajuan KIA dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -797,6 +813,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             val files = bucket.list(folderPath)
             if (files.isNotEmpty()) {
                 val fullPaths = files.map { file -> "$folderPath/${file.name}" }
+                // STORAGE API [DELETE] - Menghapus seluruh file dokumen lampiran KIA dari bucket siapel-documents
                 bucket.delete(fullPaths)
             }
         } catch (storageEx: Exception) {
@@ -807,7 +824,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     }
 
     // ==========================================================
-    // REMOTE KTP SECTION (TAHAP 5 - 8)
+    // REMOTE KTP SECTION
     // ==========================================================
 
     suspend fun createKtpApplicationRemote(
@@ -839,6 +856,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [POST] - Menambahkan data pengajuan KTP baru ke tabel applications via PostgREST
             val insertedApp = postgrest.from("applications").insert(appDto) {
                 select()
             }.decodeSingle<ApplicationRemoteDto>()
@@ -891,6 +909,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 docSelfiePath = docSelfiePath
             )
             try {
+                // REST API [POST] - Menambahkan detail KTP ke tabel ktp_detail via PostgREST
                 postgrest.from("ktp_detail").insert(ktpDetailDto)
                 Log.d(TAG, "Ktp detail remote insert success for application ID $remoteAppId with storage paths")
             } catch (_: Exception) {
@@ -913,6 +932,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     suspend fun syncKtpApplicationsRemote(currentUuid: String, localUserId: Int): Boolean {
         Log.d(TAG, "KTP remote sync start")
         return try {
+            // REST API [GET] - Mengambil daftar pengajuan KTP pengguna dari PostgREST
             val remoteApps = postgrest.from("applications").select(Columns.raw("*, ktp_detail(*)")) {
                 filter {
                     eq("user_id", currentUuid)
@@ -973,6 +993,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     ): Result<KtpDetailRemoteDto> {
         Log.d(TAG, "KTP fetch detail start for code $submissionCode")
         return try {
+            // REST API [GET] - Mengambil detail pengajuan KTP beserta relasi ktp_detail dari PostgREST
             val dto = postgrest.from("applications").select(Columns.raw("*, ktp_detail(*)")) {
                 filter {
                     eq("submission_code", submissionCode)
@@ -1109,6 +1130,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [PATCH] - Memperbarui data pengajuan KTP pada tabel applications via PostgREST
             val updatedApp = postgrest.from("applications").update(appDto) {
                 filter {
                     eq("submission_code", application.submissionCode)
@@ -1130,6 +1152,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 docSelfiePath = finalDocSelfiePath
             )
             try {
+                // REST API [PATCH] - Memperbarui detail KTP pada tabel ktp_detail via PostgREST
                 postgrest.from("ktp_detail").update(ktpDetailDto) {
                     filter {
                         eq("application_id", remoteAppId)
@@ -1162,6 +1185,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     suspend fun deleteKtpApplicationRemote(submissionCode: String, currentSupabaseUuid: String): Boolean {
         Log.d(TAG, "KTP remote delete start for code $submissionCode")
         val isDbDeleteSuccess = try {
+            // REST API [DELETE] - Menghapus pengajuan KTP dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -1187,6 +1211,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             val files = bucket.list(folderPath)
             if (files.isNotEmpty()) {
                 val fullPaths = files.map { file -> "$folderPath/${file.name}" }
+                // STORAGE API [DELETE] - Menghapus seluruh file dokumen lampiran KTP dari bucket siapel-documents
                 bucket.delete(fullPaths)
                 Log.d(storageTag, "KTP storage cleanup success")
             }
@@ -1198,7 +1223,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     }
 
     // ==========================================================
-    // REMOTE KK SECTION (TAHAP 3B - 6)
+    // REMOTE KK SECTION
     // ==========================================================
 
     suspend fun createKkApplicationRemote(
@@ -1239,6 +1264,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [POST] - Menambahkan data pengajuan KK baru ke tabel applications via PostgREST
             val insertedApp = postgrest.from("applications").insert(appDto) {
                 select()
             }.decodeSingle<ApplicationRemoteDto>()
@@ -1413,6 +1439,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             )
 
             try {
+                // REST API [POST] - Menambahkan detail KK ke tabel kk_detail via PostgREST
                 postgrest.from("kk_detail").insert(kkDetailDto)
                 Log.d(TAG, "KK detail remote insert success")
             } catch (e: Exception) {
@@ -1438,6 +1465,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     suspend fun syncKkApplicationsRemote(currentUuid: String, localUserId: Int): Boolean {
         Log.d(TAG, "KK remote sync start")
         return try {
+            // REST API [GET] - Mengambil daftar pengajuan KK pengguna dari PostgREST
             val remoteApps = postgrest.from("applications").select(Columns.raw("*, kk_detail(*)")) {
                 filter {
                     eq("user_id", currentUuid)
@@ -1509,6 +1537,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     ): Result<KkDetailRemoteDto> {
         Log.d(TAG, "KK fetch detail start for code $submissionCode")
         return try {
+            // REST API [GET] - Mengambil detail pengajuan KK beserta relasi kk_detail dari PostgREST
             val dto = postgrest.from("applications").select(Columns.raw("*, kk_detail(*)")) {
                 filter {
                     eq("submission_code", submissionCode)
@@ -1757,6 +1786,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [PATCH] - Memperbarui data pengajuan KK pada tabel applications via PostgREST
             val updatedApp = postgrest.from("applications").update(appDto) {
                 filter {
                     eq("submission_code", application.submissionCode)
@@ -1792,6 +1822,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             )
 
             try {
+                // REST API [PATCH] - Memperbarui detail KK pada tabel kk_detail via PostgREST
                 postgrest.from("kk_detail").update(kkDetailDto) {
                     filter {
                         eq("application_id", remoteAppId)
@@ -1855,6 +1886,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     ): Boolean {
         Log.d(TAG, "KK remote delete start for code $submissionCode")
         val isDbDeleteSuccess = try {
+            // REST API [DELETE] - Menghapus pengajuan KK dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -1880,6 +1912,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             val files = bucket.list(folderPath)
             if (files.isNotEmpty()) {
                 val fullPaths = files.map { file -> "$folderPath/${file.name}" }
+                // STORAGE API [DELETE] - Menghapus seluruh file dokumen lampiran KK dari bucket siapel-documents
                 bucket.delete(fullPaths)
                 Log.d(storageTag, "KK storage cleanup success for folder $folderPath")
             } else {
@@ -1897,7 +1930,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     }
 
     // ==========================================================
-    // REMOTE AKTA KELAHIRAN SECTION (TAHAP AKTA E & F & G & H & I)
+    // REMOTE AKTA KELAHIRAN SECTION
     // ==========================================================
 
     private suspend fun uploadAktaDocumentRemote(
@@ -1976,6 +2009,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
 
         return try {
             val bucket = storage.from("siapel-documents")
+            // STORAGE API - Mengunggah dokumen lampiran AKTA ke bucket siapel-documents
             bucket.upload(targetPath, fileBytes) {
                 upsert = false
             }
@@ -2050,6 +2084,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [POST] - Menambahkan data pengajuan AKTA baru ke tabel applications via PostgREST
             val insertedApp = postgrest.from("applications").insert(appDto) {
                 select()
             }.decodeSingle<ApplicationRemoteDto>()
@@ -2212,6 +2247,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             )
 
             try {
+                // REST API [POST] - Menambahkan detail AKTA ke tabel akta_detail via PostgREST
                 postgrest.from("akta_detail").insert(aktaDetailDto)
                 Log.d(TAG, "AKTA detail remote insert success")
             } catch (e: Exception) {
@@ -2241,6 +2277,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
         Log.d(TAG, "AKTA remote sync start")
         return try {
+            // REST API [GET] - Mengambil daftar pengajuan AKTA pengguna dari PostgREST
             val remoteApps = postgrest.from("applications").select(Columns.raw("*, akta_detail(*)")) {
                 filter {
                     eq("user_id", currentUuid)
@@ -2316,6 +2353,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
         Log.d(TAG, "AKTA fetch detail start for code $submissionCode")
         return try {
+            // REST API [GET] - Mengambil detail pengajuan AKTA beserta relasi akta_detail dari PostgREST
             val dto = postgrest.from("applications").select(Columns.raw("*, akta_detail(*)")) {
                 filter {
                     eq("submission_code", submissionCode)
@@ -2626,6 +2664,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [PATCH] - Memperbarui data pengajuan AKTA pada tabel applications via PostgREST
             val updatedApp = postgrest.from("applications").update(appDto) {
                 filter {
                     eq("submission_code", application.submissionCode)
@@ -2662,6 +2701,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             )
 
             try {
+                // REST API [PATCH] - Memperbarui detail AKTA pada tabel akta_detail via PostgREST
                 postgrest.from("akta_detail").update(aktaDetailDto) {
                     filter {
                         eq("application_id", remoteAppId)
@@ -2726,6 +2766,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
         Log.d(TAG, "AKTA remote delete start for code $submissionCode")
         val isDbDeleteSuccess = try {
+            // REST API [DELETE] - Menghapus pengajuan AKTA dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -2751,6 +2792,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             val files = bucket.list(folderPath)
             if (files.isNotEmpty()) {
                 val fullPaths = files.map { file -> "$folderPath/${file.name}" }
+                // STORAGE API [DELETE] - Menghapus seluruh file dokumen lampiran AKTA dari bucket siapel-documents
                 bucket.delete(fullPaths)
                 Log.d(storageTag, "AKTA storage cleanup success for folder $folderPath")
             } else {
@@ -2768,12 +2810,13 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     }
 
     // ==========================================================
-    // REMOTE DISABILITAS SECTION (TAHAP DISABILITAS E)
+    // REMOTE DISABILITAS SECTION
     // ==========================================================
 
     private suspend fun cleanupRemoteDisabilitasApplication(submissionCode: String, currentUuid: String) {
         try {
             Log.d(TAG, "Attempting cleanup of remote DISABILITAS application row for code $submissionCode")
+            // REST API [DELETE] - Membersihkan baris data pengajuan DISABILITAS dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -2860,6 +2903,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
 
         return try {
             val bucket = storage.from("siapel-documents")
+            // STORAGE API - Mengunggah dokumen lampiran DISABILITAS ke bucket siapel-documents
             bucket.upload(targetPath, fileBytes) {
                 upsert = false
             }
@@ -2929,6 +2973,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [POST] - Menambahkan data pengajuan DISABILITAS baru ke tabel applications via PostgREST
             val insertedApp = postgrest.from("applications").insert(appDto) {
                 select()
             }.decodeSingle<ApplicationRemoteDto>()
@@ -2980,6 +3025,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             )
 
             try {
+                // REST API [POST] - Menambahkan detail DISABILITAS ke tabel disabilitas_detail via PostgREST
                 postgrest.from("disabilitas_detail").insert(disabilitasDetailDto)
                 Log.d(TAG, "DISABILITAS detail remote insert success")
             } catch (e: Exception) {
@@ -3005,6 +3051,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
     suspend fun syncDisabilitasApplicationsRemote(currentUuid: String, localUserId: Int): Boolean {
         Log.d(TAG, "DISABILITAS remote sync start")
         return try {
+            // REST API [GET] - Mengambil daftar pengajuan DISABILITAS pengguna dari PostgREST
             val remoteApps = postgrest.from("applications").select(Columns.raw("*, disabilitas_detail(*)")) {
                 filter {
                     eq("user_id", currentUuid)
@@ -3068,6 +3115,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
         Log.d(TAG, "DISABILITAS fetch detail start for code $submissionCode")
         return try {
+            // REST API [GET] - Mengambil detail pengajuan DISABILITAS beserta relasi disabilitas_detail dari PostgREST
             val dto = postgrest.from("applications").select(Columns.raw("*, disabilitas_detail(*)")) {
                 filter {
                     eq("submission_code", submissionCode)
@@ -3222,6 +3270,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
                 keterangan = application.keterangan
             )
 
+            // REST API [PATCH] - Memperbarui data pengajuan DISABILITAS pada tabel applications via PostgREST
             val updatedApp = postgrest.from("applications").update(appDto) {
                 filter {
                     eq("submission_code", application.submissionCode)
@@ -3246,6 +3295,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             )
 
             try {
+                // REST API [PATCH] - Memperbarui detail DISABILITAS pada tabel disabilitas_detail via PostgREST
                 postgrest.from("disabilitas_detail").update(disabilitasDetailDto) {
                     filter {
                         eq("application_id", remoteAppId)
@@ -3288,6 +3338,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
         }
         Log.d(TAG, "DISABILITAS remote delete start for code $submissionCode")
         val isDbDeleteSuccess = try {
+            // REST API [DELETE] - Menghapus pengajuan DISABILITAS dari tabel applications via PostgREST
             postgrest.from("applications").delete {
                 filter {
                     eq("submission_code", submissionCode)
@@ -3313,6 +3364,7 @@ class ApplicationRepository(private val applicationDao: ApplicationDao) {
             val files = bucket.list(folderPath)
             if (files.isNotEmpty()) {
                 val fullPaths = files.map { file -> "$folderPath/${file.name}" }
+                // STORAGE API [DELETE] - Menghapus seluruh file dokumen lampiran DISABILITAS dari bucket siapel-documents
                 bucket.delete(fullPaths)
                 Log.d(storageTag, "DISABILITAS storage cleanup success for folder $folderPath")
             } else {
