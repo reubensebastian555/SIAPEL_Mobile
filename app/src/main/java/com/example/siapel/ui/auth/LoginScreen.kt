@@ -1,5 +1,7 @@
 package com.example.siapel.ui.auth
 
+import androidx.activity.compose.BackHandler
+import com.example.siapel.model.SubmitState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -33,6 +35,10 @@ fun LoginScreen(
     val email by viewModel.emailLogin.collectAsState()
     val password by viewModel.passwordLogin.collectAsState()
     val errorMsg by viewModel.loginError.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val navigationLocked = isLoading
+
+    BackHandler(enabled = navigationLocked) { }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -145,6 +151,8 @@ fun LoginScreen(
                 // Primary Action Button
                 SiapelPrimaryButton(
                     text = "Masuk",
+                    submitState = if (navigationLocked) SubmitState.LOADING else SubmitState.IDLE,
+                    loadingText = "Memproses login",
                     onClick = {
                         viewModel.validateAndLogin {
                             onNavigateToHome()
@@ -170,7 +178,7 @@ fun LoginScreen(
                         color = MaterialTheme.colorScheme.primary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable { onNavigateToRegister() }
+                        modifier = Modifier.clickable(enabled = !navigationLocked) { onNavigateToRegister() }
                     )
                 }
             }

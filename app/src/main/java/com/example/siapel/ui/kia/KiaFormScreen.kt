@@ -1,5 +1,7 @@
 package com.example.siapel.ui.kia
 
+import androidx.activity.compose.BackHandler
+import com.example.siapel.model.SubmitState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -41,6 +43,11 @@ fun KiaFormScreen(
     val uiState by viewModel.uiState
     val isEditMode by viewModel.isEditMode
     val submitState by viewModel.submitState
+    val isEditLoading by viewModel.isEditLoading
+    val submissionBlocked by viewModel.submissionBlocked
+    val operationError by viewModel.operationError.collectAsState()
+    val isBusy = submitState != SubmitState.IDLE || isEditLoading
+    BackHandler(enabled = isBusy) { }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val isDark = isSystemInDarkTheme()
@@ -50,7 +57,7 @@ fun KiaFormScreen(
             if (success) {
                 onNavigateBack()
             } else {
-                snackbarHostState.showSnackbar(if (isEditMode) "Gagal menyimpan perubahan. Silakan coba lagi." else "Pengajuan gagal dikirim. Silakan coba lagi.")
+                snackbarHostState.showSnackbar(viewModel.operationError.value ?: "Pengajuan belum berhasil diproses.")
             }
         }
     }
@@ -58,16 +65,16 @@ fun KiaFormScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Text(
-                        "Formulir KIA", 
+                        "Formulir KIA",
                         color = MaterialTheme.colorScheme.onSecondary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
-                    ) 
+                    )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = onNavigateBack, enabled = !isBusy) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Kembali",
@@ -82,7 +89,11 @@ fun KiaFormScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        LazyColumn(
+        if (isEditLoading) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
@@ -116,6 +127,10 @@ fun KiaFormScreen(
                 InfoCard()
             }
 
+            operationError?.let { message ->
+                item { ErrorText(message) }
+            }
+
             // Section 1: Informasi Layanan
             item {
                 FormSection(title = "Informasi Layanan") {
@@ -142,7 +157,7 @@ fun KiaFormScreen(
                         displayText = { it.uppercase() }
                     )
                     uiState.kecamatanError?.let { ErrorText(it) }
-                    
+
                     Spacer(modifier = Modifier.height(8.dp))
 
                     SiapelDropdown(
@@ -356,7 +371,10 @@ fun KiaFormScreen(
             item {
                 val context = LocalContext.current
                 Spacer(modifier = Modifier.height(8.dp))
-                SiapelPrimaryButton(
+                if (submissionBlocked) {
+                    Text("Periksa status pengajuan atau buka kembali formulir sebelum melanjutkan.",
+                        color = MaterialTheme.colorScheme.error)
+                } else SiapelPrimaryButton(
                     text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
                     onClick = {
                         viewModel.submitForm(context)

@@ -1,5 +1,3 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -20,23 +18,6 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        val localProperties = Properties()
-        val localPropertiesFile = rootProject.file("local.properties")
-        if (localPropertiesFile.exists()) {
-            localPropertiesFile.inputStream().use { stream -> localProperties.load(stream) }
-        }
-
-        val supabaseUrl = localProperties.getProperty("SUPABASE_URL")
-            ?: project.findProperty("SUPABASE_URL") as? String
-            ?: throw GradleException("SUPABASE_URL tidak ditemukan di local.properties atau gradle properties. Harap tambahkan SUPABASE_URL di local.properties.")
-
-        val supabasePublishableKey = localProperties.getProperty("SUPABASE_PUBLISHABLE_KEY")
-            ?: project.findProperty("SUPABASE_PUBLISHABLE_KEY") as? String
-            ?: throw GradleException("SUPABASE_PUBLISHABLE_KEY tidak ditemukan di local.properties atau gradle properties. Harap tambahkan SUPABASE_PUBLISHABLE_KEY di local.properties.")
-
-        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-        buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabasePublishableKey\"")
     }
 
     buildTypes {
@@ -73,23 +54,25 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    
+
     // Room
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     kapt(libs.androidx.room.compiler)
-    
+
     // DataStore
     implementation(libs.androidx.datastore.preferences)
 
-    // Supabase Auth, Postgrest, Storage & Ktor Engine
-    implementation(platform(libs.supabase.bom))
-    implementation(libs.supabase.auth)
-    implementation(libs.supabase.postgrest)
-    implementation(libs.supabase.storage)
+    // Laravel REST API networking and serialization
     implementation(libs.ktor.client.android)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
+    testImplementation(libs.ktor.client.mock)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

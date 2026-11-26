@@ -1,5 +1,7 @@
 package com.example.siapel.ui.akta
 
+import androidx.activity.compose.BackHandler
+import com.example.siapel.model.SubmitState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -35,6 +37,11 @@ fun AktaKelahiranFormScreen(
     val uiState by viewModel.uiState.collectAsState()
     val isEditMode by viewModel.isEditMode
     val submitState by viewModel.submitState.collectAsState()
+    val isEditLoading by viewModel.isEditLoading.collectAsState()
+    val submissionBlocked by viewModel.submissionBlocked.collectAsState()
+    val operationError by viewModel.operationError.collectAsState()
+    val isSubmitting = submitState == SubmitState.LOADING || submitState == SubmitState.SUCCESS
+    BackHandler(enabled = isSubmitting) {}
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val isDark = isSystemInDarkTheme()
@@ -43,10 +50,12 @@ fun AktaKelahiranFormScreen(
         viewModel.submissionResult.collect { success ->
             if (success) {
                 navController.popBackStack()
-            } else {
-                snackbarHostState.showSnackbar(if (isEditMode) "Gagal menyimpan perubahan. Silakan coba lagi." else "Pengajuan gagal dikirim. Silakan coba lagi.")
             }
         }
+    }
+
+    LaunchedEffect(operationError) {
+        operationError?.let { snackbarHostState.showSnackbar(it) }
     }
 
     val kategoriOptions = listOf(
@@ -71,7 +80,7 @@ fun AktaKelahiranFormScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(enabled = !isSubmitting, onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSecondary)
                     }
                 },
@@ -117,6 +126,31 @@ fun AktaKelahiranFormScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     InfoCard(text = "Pastikan data bayi, ibu, pelapor, dan Kartu Keluarga sesuai dengan dokumen kependudukan.")
+                }
+            }
+
+            if (isEditLoading) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("Memuat pengajuan...")
+                    }
+                }
+                return@LazyColumn
+            }
+
+            operationError?.let { message ->
+                item {
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
 
@@ -392,19 +426,21 @@ fun AktaKelahiranFormScreen(
             // Submit Button
             item {
                 val context = LocalContext.current
-                SiapelPrimaryButton(
-                    text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
-                    onClick = {
-                        viewModel.submitForm(context)
-                    },
-                    submitState = submitState,
-                    loadingText = if (isEditMode) "Menyimpan perubahan" else "Mengirim pengajuan",
-                    successText = if (isEditMode) "Perubahan berhasil disimpan" else "Berhasil dikirim",
-                    errorText = if (isEditMode) "Gagal menyimpan" else "Gagal dikirim",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 16.dp)
-                )
+                if (!submissionBlocked) {
+                    SiapelPrimaryButton(
+                        text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
+                        onClick = {
+                            viewModel.submitForm(context)
+                        },
+                        submitState = submitState,
+                        loadingText = if (isEditMode) "Menyimpan perubahan" else "Mengirim pengajuan",
+                        successText = if (isEditMode) "Perubahan berhasil disimpan" else "Berhasil dikirim",
+                        errorText = if (isEditMode) "Gagal menyimpan" else "Gagal dikirim",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp)
+                    )
+                }
             }
         }
     }

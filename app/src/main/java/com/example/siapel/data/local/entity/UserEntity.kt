@@ -8,12 +8,14 @@ import androidx.room.PrimaryKey
     tableName = "users",
     indices = [
         Index(value = ["email"], unique = true),
-        Index(value = ["nik"], unique = true)
+        Index(value = ["nik"], unique = true),
+        Index(value = ["remoteUserUuid"], unique = true)
     ]
 )
 data class UserEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,
+    val remoteUserUuid: String? = null,
     val namaLengkap: String,
     val nik: String,
     val email: String,

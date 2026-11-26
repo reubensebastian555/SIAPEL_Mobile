@@ -14,6 +14,10 @@ import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -41,6 +45,16 @@ fun StatusScreen(
     val filteredApps by viewModel.filteredApplications.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val refreshError by viewModel.refreshError.collectAsState()
+    val cacheError by viewModel.cacheError.collectAsState()
+    val cacheReady by viewModel.cacheReady.collectAsState()
+    var initialRefreshStarted by remember { mutableStateOf(false) }
+    val loadError = cacheError ?: refreshError
+
+    LaunchedEffect(viewModel) {
+        viewModel.refreshApplications()
+        initialRefreshStarted = true
+    }
 
     Scaffold(
         bottomBar = {
@@ -144,7 +158,38 @@ fun StatusScreen(
             }
 
             // List permohonan
-            if (filteredApps.isEmpty()) {
+            if (loadError != null && filteredApps.isNotEmpty()) {
+                Text(
+                    text = "${loadError ?: ""}. Menampilkan data terakhir yang tersedia.",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+
+            if (filteredApps.isEmpty() && (!initialRefreshStarted || isRefreshing || (!cacheReady && loadError == null))) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else if (filteredApps.isEmpty() && loadError != null) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f).padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = loadError ?: "Data pengajuan belum dapat dimuat",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        TextButton(onClick = { viewModel.refreshApplications() }) {
+                            Text("Coba lagi")
+                        }
+                    }
+                }
+            } else if (filteredApps.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -291,7 +336,8 @@ fun getServiceIcon(serviceName: String): ImageVector {
     return when {
         serviceName.contains("KTP", ignoreCase = true) -> Icons.Default.Badge
         serviceName.contains("KIA", ignoreCase = true) -> Icons.Default.ChildCare
-        serviceName.contains("Keluarga", ignoreCase = true) -> Icons.Default.Groups
+        serviceName.equals("KK", ignoreCase = true) ||
+                serviceName.contains("Keluarga", ignoreCase = true) -> Icons.Default.Groups
         serviceName.contains("Akta", ignoreCase = true) -> Icons.Default.Description
         serviceName.contains("Disabilitas", ignoreCase = true) -> Icons.AutoMirrored.Filled.Accessible
         else -> Icons.AutoMirrored.Filled.Assignment

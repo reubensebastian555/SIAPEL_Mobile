@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.siapel.model.SubmitState
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import android.database.Cursor
 import android.net.Uri
@@ -47,6 +46,8 @@ import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.content.Intent
 import androidx.compose.foundation.Image
@@ -81,11 +82,12 @@ fun SiapelBottomNavigation(
                 onClick = {
                     if (currentRoute != route) {
                         navController.navigate(route) {
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
+                            popUpTo(Screen.Home.route) {
+                                inclusive = false
+                                saveState = false
                             }
                             launchSingleTop = true
-                            restoreState = true
+                            restoreState = false
                         }
                     }
                 },
@@ -581,20 +583,31 @@ fun getFileFormatLabel(displayName: String, mimeType: String?): String {
 
 const val MAX_FILE_SIZE_BYTES = 2L * 1024L * 1024L // 2 MB
 
-private fun processAndValidateSelectedDocument(
-    context: Context,
-    uri: Uri,
-    onDocumentSelected: (SelectedDocument) -> Unit,
-    onErrorChanged: (String?) -> Unit
-) {
-    val (name, size, mime) = getDocumentMetadata(context, uri)
-    if (size > MAX_FILE_SIZE_BYTES) {
-        onErrorChanged("Ukuran file Maksimal hanya 2 MB")
-    } else {
-        onErrorChanged(null)
-        onDocumentSelected(SelectedDocument(uri, name, size, mime, UploadState.READY, null))
+private suspend fun validateSelectedDocument(context: Context, uri: Uri): SelectedDocument =
+    withContext(Dispatchers.IO) {
+        require(uri.scheme == "content") { "Sumber dokumen tidak didukung" }
+        val (name, _, rawMime) = getDocumentMetadata(context, uri)
+        val mime = rawMime?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
+        val normalizedMime = if (mime == "image/jpg") "image/jpeg" else mime
+        require(normalizedMime in setOf(
+            "image/jpeg", "image/png", "application/pdf", "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )) { "Format file harus JPG, JPEG, PNG, PDF, DOC atau DOCX" }
+        var size = 0L
+        val input = context.contentResolver.openInputStream(uri)
+            ?: throw IllegalArgumentException("Dokumen tidak dapat dibaca")
+        input.use { stream ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val count = stream.read(buffer)
+                if (count == -1) break
+                size += count
+                require(size <= MAX_FILE_SIZE_BYTES) { "Ukuran file maksimal hanya 2 MB" }
+            }
+        }
+        require(size > 0L) { "File kosong tidak dapat dipilih" }
+        SelectedDocument(uri, name, size, normalizedMime, UploadState.READY, null)
     }
-}
 
 @Composable
 fun SiapelInfoCard(
@@ -644,35 +657,72 @@ fun SiapelDocumentPicker(
     val isImage = selectedDoc?.mimeType?.contains("image", true) == true ||
             selectedDoc?.displayName?.matches(Regex(".*\\.(jpg|jpeg|png)", RegexOption.IGNORE_CASE)) == true
 
-    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let {
-            processAndValidateSelectedDocument(context, it, onDocumentSelected) { err -> fileSizeError = err }
-        }
-    }
+    val scope = rememberCoroutineScope()
+    val latestOnSelected by rememberUpdatedState(onDocumentSelected)
+    var validating by remember { mutableStateOf(false) }
+    var pendingCameraFile by remember { mutableStateOf<File?>(null) }
 
-    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let {
-            processAndValidateSelectedDocument(context, it, onDocumentSelected) { err -> fileSizeError = err }
+    fun validateSelection(uri: Uri, cameraFile: File? = null) {
+        if (validating) {
+            cameraFile?.delete()
+            return
         }
-    }
-
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success) {
-            tempCameraUri?.let { uri ->
-                processAndValidateSelectedDocument(context, uri, onDocumentSelected) { err -> fileSizeError = err }
+        validating = true
+        scope.launch {
+            var accepted = false
+            try {
+                val document = validateSelectedDocument(context, uri)
+                fileSizeError = null
+                latestOnSelected(document)
+                accepted = true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IllegalArgumentException) {
+                fileSizeError = e.message ?: "Dokumen tidak valid"
+            } catch (_: Exception) {
+                fileSizeError = "Dokumen tidak dapat dibaca. Pilih kembali file."
+            } finally {
+                if (!accepted) cameraFile?.delete()
+                validating = false
             }
         }
     }
 
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { validateSelection(it) }
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let { validateSelection(it) }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val uri = tempCameraUri
+        val file = pendingCameraFile
+        tempCameraUri = null
+        pendingCameraFile = null
+        if (success && uri != null) validateSelection(uri, file)
+        else file?.delete()
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) {
-            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val storageDir = context.getExternalFilesDir("Pictures")
-            val file = File.createTempFile("JPEG_${timeStamp}_", ".jpg", storageDir)
-            val authority = "${context.packageName}.fileprovider"
-            val uri = FileProvider.getUriForFile(context, authority, file)
-            tempCameraUri = uri
-            cameraLauncher.launch(uri)
+            try {
+                val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                val storageDir = requireNotNull(context.getExternalFilesDir("Pictures"))
+                val file = File.createTempFile("JPEG_${timeStamp}_", ".jpg", storageDir)
+                pendingCameraFile = file
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                tempCameraUri = uri
+                cameraLauncher.launch(uri)
+            } catch (_: Exception) {
+                pendingCameraFile?.delete()
+                pendingCameraFile = null
+                tempCameraUri = null
+                fileSizeError = "Kamera tidak dapat dibuka"
+            }
+        } else {
+            fileSizeError = "Izin kamera diperlukan untuk mengambil foto"
         }
     }
 
@@ -807,7 +857,7 @@ fun SiapelDocumentPicker(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         if (selectedDoc != null) {
-                            val format = getFileFormatLabel(selectedDoc.displayName, selectedDoc.mimeType)
+                            val format = if (selectedDoc.uri == null) "Tersimpan di server" else getFileFormatLabel(selectedDoc.displayName, selectedDoc.mimeType)
                             val sizeStr = formatFileSize(selectedDoc.fileSize)
                             val metaText = if (sizeStr.isNotEmpty()) "$format • $sizeStr" else format
 
@@ -893,6 +943,9 @@ fun SiapelDocumentPicker(
                 }
             }
 
+            if (validating) {
+                Text("Memeriksa dokumen...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -902,7 +955,9 @@ fun SiapelDocumentPicker(
                 if (selectedDoc != null) {
                     TextButton(
                         onClick = {
-                            if (isImage) {
+                            if (selectedDoc.uri == null) {
+                                Toast.makeText(context, "Lihat dokumen tersimpan melalui Detail Pengajuan.", Toast.LENGTH_SHORT).show()
+                            } else if (isImage) {
                                 showImagePreview = true
                             } else if (selectedDoc.uri != null) {
                                 try {
@@ -919,7 +974,7 @@ fun SiapelDocumentPicker(
                                         }
                                         context.startActivity(intent)
                                     } catch (e2: Exception) {
-                                        // ignore
+                                        Toast.makeText(context, "Aplikasi pembaca dokumen tidak tersedia", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
@@ -931,12 +986,14 @@ fun SiapelDocumentPicker(
 
                     TextButton(
                         onClick = { showSourceSheet = true },
+                        enabled = !validating,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         Text("Ganti", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
 
                     IconButton(
+                        enabled = !validating,
                         onClick = {
                             fileSizeError = null
                             onClearFile()
@@ -953,6 +1010,7 @@ fun SiapelDocumentPicker(
                 } else {
                     Button(
                         onClick = { showSourceSheet = true },
+                        enabled = !validating,
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,

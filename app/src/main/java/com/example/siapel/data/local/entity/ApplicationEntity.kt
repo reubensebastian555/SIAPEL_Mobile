@@ -1,14 +1,24 @@
 package com.example.siapel.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.siapel.model.ApplicationStatus
 
-@Entity(tableName = "applications")
+@Entity(
+    tableName = "applications",
+    indices = [
+        Index(value = ["remoteUuid"], unique = true),
+        Index(value = ["userId"]),
+        Index(value = ["remoteUserUuid"])
+    ]
+)
 data class ApplicationEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,
     val userId: Int,
+    val remoteUuid: String? = null,
+    val remoteUserUuid: String? = null,
     val serviceType: String, // e.g., "KIA", "KTP", "KK", "AKTA", "DISABILITAS"
     val category: String,
     val submissionCode: String,
@@ -36,7 +46,7 @@ data class ApplicationEntity(
     val namaIbu: String? = null,
     val nomorKk: String? = null,
 
-    // Document URIs (Simplified as Strings for Beta)
+    // Document URIs / Paths
     val doc1: String? = null,
     val doc2: String? = null,
     val doc3: String? = null,
@@ -48,6 +58,6 @@ data class ApplicationEntity(
     val doc9: String? = null,
     val doc10: String? = null,
     val docSelfie: String? = null,
-    
+
     val createdAt: Long = System.currentTimeMillis()
 )

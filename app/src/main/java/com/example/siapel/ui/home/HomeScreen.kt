@@ -47,6 +47,8 @@ fun HomeScreen(
 ) {
     val userName by viewModel.userName.collectAsState()
     val activeApp by viewModel.activeApplication.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
+    val syncError by viewModel.syncError.collectAsState()
     val isDarkMode by profileViewModel.isDarkMode.collectAsState()
 
     LaunchedEffect(Unit) {
@@ -93,9 +95,9 @@ fun HomeScreen(
                             ) {
                                 MalangEmblem()
                             }
-                            
+
                             Spacer(modifier = Modifier.width(16.dp))
-                            
+
                             Column(
                                 verticalArrangement = Arrangement.Center
                             ) {
@@ -312,6 +314,14 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     val currentActiveApp = activeApp
+                    if (currentActiveApp != null && !isSyncing && syncError != null) {
+                        Text(
+                            text = "Menampilkan data tersimpan. ${syncError.orEmpty()}",
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
                     if (currentActiveApp != null) {
                         Card(
                             shape = RoundedCornerShape(16.dp),
@@ -396,11 +406,23 @@ fun HomeScreen(
                                 .padding(vertical = 16.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "Tidak ada permohonan aktif",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 14.sp
-                            )
+                            when {
+                                isSyncing -> CircularProgressIndicator(
+                                    modifier = Modifier.size(28.dp),
+                                    strokeWidth = 3.dp
+                                )
+                                syncError != null -> Text(
+                                    text = syncError.orEmpty(),
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 14.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                                else -> Text(
+                                    text = "Tidak ada permohonan aktif",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
                     }
                 }

@@ -1,5 +1,7 @@
 package com.example.siapel.ui.auth
 
+import androidx.activity.compose.BackHandler
+import com.example.siapel.model.SubmitState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,6 +32,11 @@ fun RegisterScreen(
 ) {
     val state by viewModel.registerState.collectAsState()
     val errorMsg by viewModel.registerError.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    var registrationCompleted by remember { mutableStateOf(false) }
+    val navigationLocked = isLoading || registrationCompleted
+
+    BackHandler(enabled = navigationLocked) { }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -181,8 +188,11 @@ fun RegisterScreen(
                 Spacer(modifier = Modifier.height(16.dp))
                 SiapelPrimaryButton(
                     text = "Daftar",
+                    submitState = if (navigationLocked) SubmitState.LOADING else SubmitState.IDLE,
+                    loadingText = "Mendaftarkan akun",
                     onClick = {
                         viewModel.validateAndRegister {
+                            registrationCompleted = true
                             scope.launch {
                                 snackbarHostState.showSnackbar(
                                     message = "Pendaftaran berhasil",
@@ -214,7 +224,7 @@ fun RegisterScreen(
                         color = MaterialTheme.colorScheme.primary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable { onNavigateToLogin() }
+                        modifier = Modifier.clickable(enabled = !navigationLocked) { onNavigateToLogin() }
                     )
                 }
                 Spacer(modifier = Modifier.height(24.dp))

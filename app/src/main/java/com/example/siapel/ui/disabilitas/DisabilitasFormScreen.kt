@@ -3,6 +3,7 @@ package com.example.siapel.ui.disabilitas
 import android.database.Cursor
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -32,6 +33,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.siapel.data.WilayahData
 import com.example.siapel.model.SelectedDocument
+import com.example.siapel.model.SubmitState
 import com.example.siapel.ui.components.SiapelDropdown
 import com.example.siapel.ui.components.SiapelInfoCard
 import com.example.siapel.ui.components.SiapelPrimaryButton
@@ -50,6 +52,11 @@ fun DisabilitasFormScreen(
     val uiState by viewModel.uiState
     val isEditMode by viewModel.isEditMode
     val submitState by viewModel.submitState
+    val isEditLoading by viewModel.isEditLoading
+    val operationError by viewModel.operationError.collectAsState()
+    val isSubmitting = submitState == SubmitState.LOADING || submitState == SubmitState.SUCCESS
+    val canSubmit = viewModel.canSubmit
+    BackHandler(enabled = isSubmitting) { }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -59,7 +66,7 @@ fun DisabilitasFormScreen(
             if (success) {
                 navController.popBackStack()
             } else {
-                snackbarHostState.showSnackbar(if (isEditMode) "Gagal menyimpan perubahan. Silakan coba lagi." else "Pengajuan gagal dikirim. Silakan coba lagi.")
+                snackbarHostState.showSnackbar(viewModel.operationError.value ?: "Pengajuan belum berhasil diproses.")
             }
         }
     }
@@ -78,7 +85,7 @@ fun DisabilitasFormScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = { navController.popBackStack() }, enabled = !isSubmitting) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Kembali",
@@ -131,7 +138,22 @@ fun DisabilitasFormScreen(
                 }
             }
 
-            // SECTION 1 — INFORMASI LAYANAN
+            if (isEditLoading) {
+                item {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        Text("Memuat data pengajuan...")
+                    }
+                }
+            }
+            operationError?.let { message ->
+                item { ErrorText(message) }
+            }
+
+            // SECTION 1 â€” INFORMASI LAYANAN
             item {
                 FormSection(title = "Informasi Layanan") {
                     SiapelDropdown(
@@ -145,7 +167,7 @@ fun DisabilitasFormScreen(
                 }
             }
 
-            // SECTION 2 — WILAYAH DAN KONTAK
+            // SECTION 2 â€” WILAYAH DAN KONTAK
             item {
                 FormSection(title = "Wilayah dan Kontak") {
                     SiapelDropdown(
@@ -212,7 +234,7 @@ fun DisabilitasFormScreen(
                 }
             }
 
-            // SECTION 3 — DATA PELAPOR
+            // SECTION 3 â€” DATA PELAPOR
             item {
                 FormSection(title = "Data Pelapor") {
                     SiapelTextField(
@@ -236,7 +258,7 @@ fun DisabilitasFormScreen(
                 }
             }
 
-            // SECTION 4 — DOKUMEN PERSYARATAN
+            // SECTION 4 â€” DOKUMEN PERSYARATAN
             item {
                 FormSection(title = "Dokumen Persyaratan") {
                     SiapelInfoCard(
@@ -265,7 +287,7 @@ fun DisabilitasFormScreen(
                 }
             }
 
-            // SECTION 5 — FOTO SELFIE
+            // SECTION 5 â€” FOTO SELFIE
             item {
                 FormSection(title = "Foto Selfie") {
                     SiapelDocumentPicker(
@@ -279,9 +301,17 @@ fun DisabilitasFormScreen(
                 }
             }
 
-            // SECTION 6 — SUBMIT
+            // SECTION 6 â€” SUBMIT
             item {
-                SiapelPrimaryButton(
+                if (!canSubmit && submitState == SubmitState.IDLE) {
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
+                    ) {
+                        Text(if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan")
+                    }
+                } else SiapelPrimaryButton(
                     text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
                     onClick = {
                         viewModel.submitForm(context)

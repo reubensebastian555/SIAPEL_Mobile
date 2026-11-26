@@ -3,6 +3,7 @@ package com.example.siapel.ui.kk
 import android.database.Cursor
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -32,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.siapel.data.WilayahData
+import com.example.siapel.model.SubmitState
 import com.example.siapel.model.SelectedDocument
 import com.example.siapel.ui.components.SiapelDropdown
 import com.example.siapel.ui.components.SiapelPrimaryButton
@@ -57,6 +59,11 @@ fun KkFormScreen(
     val uiState by viewModel.uiState
     val isEditMode by viewModel.isEditMode
     val submitState by viewModel.submitState
+    val isEditLoading by viewModel.isEditLoading
+    val operationError by viewModel.operationError.collectAsState()
+    val isSubmitting = submitState == SubmitState.LOADING || submitState == SubmitState.SUCCESS
+    val canSubmit = viewModel.canSubmit
+    BackHandler(enabled = isSubmitting) { }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -67,7 +74,7 @@ fun KkFormScreen(
             if (success) {
                 onNavigateBack()
             } else {
-                snackbarHostState.showSnackbar(if (isEditMode) "Gagal menyimpan perubahan. Silakan coba lagi." else "Pengajuan gagal dikirim. Silakan coba lagi.")
+                snackbarHostState.showSnackbar(viewModel.operationError.value ?: "Pengajuan belum berhasil diproses.")
             }
         }
     }
@@ -84,7 +91,7 @@ fun KkFormScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = onNavigateBack, enabled = !isSubmitting) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Kembali",
@@ -135,7 +142,22 @@ fun KkFormScreen(
                 }
             }
 
-            // SECTION 1 — INFORMASI LAYANAN
+            if (isEditLoading) {
+                item {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        Text("Memuat data pengajuan...")
+                    }
+                }
+            }
+            operationError?.let { message ->
+                item { ErrorText(message) }
+            }
+
+            // SECTION 1 â€” INFORMASI LAYANAN
             item {
                 FormSection(title = "Informasi Layanan") {
                     SiapelDropdown(
@@ -149,7 +171,7 @@ fun KkFormScreen(
                 }
             }
 
-            // SECTION 2 — WILAYAH DAN KONTAK
+            // SECTION 2 â€” WILAYAH DAN KONTAK
             item {
                 FormSection(title = "Wilayah dan Kontak") {
                     SiapelDropdown(
@@ -216,7 +238,7 @@ fun KkFormScreen(
                 }
             }
 
-            // SECTION 3 — DATA PELAPOR
+            // SECTION 3 â€” DATA PELAPOR
             item {
                 FormSection(title = "Data Pelapor") {
                     SiapelTextField(
@@ -240,7 +262,7 @@ fun KkFormScreen(
                 }
             }
 
-            // SECTION 4 — DATA KELUARGA
+            // SECTION 4 â€” DATA KELUARGA
             item {
                 FormSection(title = "Data Keluarga") {
                     SiapelTextField(
@@ -305,7 +327,7 @@ fun KkFormScreen(
                 }
             }
 
-            // SECTION 5 — DOKUMEN PERSYARATAN
+            // SECTION 5 â€” DOKUMEN PERSYARATAN
             item {
                 FormSection(title = "Dokumen Persyaratan (Unggah sesuai kebutuhan layanan)") {
                     SiapelInfoCard(
@@ -386,7 +408,7 @@ fun KkFormScreen(
                 }
             }
 
-            // SECTION 6 — DOKUMEN PENDUKUNG & SELFIE
+            // SECTION 6 â€” DOKUMEN PENDUKUNG & SELFIE
             item {
                 FormSection(title = "Dokumen Pendukung & Selfie") {
                     SiapelDocumentPicker(
@@ -407,10 +429,18 @@ fun KkFormScreen(
                 }
             }
 
-            // SECTION 7 — SUBMIT
+            // SECTION 7 â€” SUBMIT
             item {
                 Spacer(modifier = Modifier.height(8.dp))
-                SiapelPrimaryButton(
+                if (!canSubmit && submitState == SubmitState.IDLE) {
+                    Button(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan")
+                    }
+                } else SiapelPrimaryButton(
                     text = if (isEditMode) "Simpan Perubahan" else "Kirim Pengajuan",
                     onClick = {
                         viewModel.submitForm(context)

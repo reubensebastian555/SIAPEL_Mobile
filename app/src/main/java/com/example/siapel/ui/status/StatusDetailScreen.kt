@@ -1,7 +1,11 @@
 package com.example.siapel.ui.status
 
 import android.content.Intent
-import android.net.Uri
+import androidx.activity.compose.BackHandler
+import android.content.ClipData
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -32,7 +36,11 @@ import com.example.siapel.model.ApplicationStatusItem
 import com.example.siapel.ui.theme.*
 import com.example.siapel.viewmodel.StatusViewModel
 import androidx.navigation.NavController
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,31 +51,155 @@ fun StatusDetailScreen(
     snackbarHostState: SnackbarHostState,
     navController: NavController
 ) {
-    val appState by viewModel.getApplicationByCodeFlow(code).collectAsState(initial = null)
+    val detailFlow = remember(viewModel, code) { viewModel.getApplicationByCodeFlow(code) }
+    val appState by detailFlow.collectAsState(initial = null)
     val app = appState
     var showDeleteDialog by remember { mutableStateOf(false) }
     val isDeleting by viewModel.isDeleting.collectAsState()
     val context = LocalContext.current
     val documentViewLoading by viewModel.documentViewLoading.collectAsState()
+    var detailLoading by remember(code) { mutableStateOf(true) }
+    var detailError by remember(code) { mutableStateOf(false) }
+    var refreshRequest by remember(code) { mutableStateOf(0) }
+    val pendingDocument = remember(code) { mutableStateOf<File?>(null) }
+    val previewBusy = documentViewLoading || pendingDocument.value != null
+    val actionsEnabled = !isDeleting && !previewBusy && !detailLoading && !detailError
+    BackHandler(enabled = isDeleting || previewBusy) {}
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(viewModel, code, refreshRequest) {
+        detailLoading = true
+        detailError = false
+        try {
+            viewModel.refreshApplicationDetail(code)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            detailError = true
+        } finally {
+            detailLoading = false
+        }
+    }
+
+
+    LaunchedEffect(viewModel, code) {
         viewModel.deleteResult.collect { success ->
             if (success) {
                 onNavigateBack()
             } else {
-                snackbarHostState.showSnackbar("Gagal menghapus pengajuan. Silakan coba lagi.")
+                detailError = true
+                snackbarHostState.showSnackbar("Periksa kembali pengajuan sebelum mengulangi tindakan.")
             }
         }
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.openDocumentUrl.collect { url ->
-            try {
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                context.startActivity(intent)
-            } catch (e: Exception) {
-                Toast.makeText(context, "Gagal membuka tautan dokumen: ${e.message}", Toast.LENGTH_SHORT).show()
+    // Keep the temporary file only while the external viewer needs it.
+
+    fun clearTemporaryDocument() {
+        val file = pendingDocument.value ?: return
+        pendingDocument.value = null
+        try {
+            val uri = FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            context.revokeUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) {
+            // Still attempt file removal if the URI is no longer available.
+        } finally {
+            file.delete()
+        }
+    }
+
+    val documentLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        clearTemporaryDocument()
+    }
+
+    DisposableEffect(context) {
+        onDispose { clearTemporaryDocument() }
+    }
+
+    LaunchedEffect(viewModel, context, code) {
+        // Remove orphaned previews left by an interrupted process.
+        withContext(Dispatchers.IO) {
+            val directory = File(context.cacheDir, "laravel_documents")
+            directory.listFiles()?.filter {
+                it.isFile && it.name.startsWith("document_") &&
+                        System.currentTimeMillis() - it.lastModified() > 24L * 60 * 60 * 1000
+            }?.forEach { file ->
+                try {
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                    context.revokeUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: Exception) {
+                    // Removal is still attempted.
+                } finally {
+                    file.delete()
+                }
             }
+        }
+        viewModel.openDocument.collect { event ->
+            try {
+                if (!viewModel.isDocumentSessionCurrent(event)) {
+                    return@collect
+                }
+
+                if (pendingDocument.value != null) return@collect
+
+                val document = event.document
+                val mime = document.contentType
+                    ?.substringBefore(';')
+                    ?.trim()
+                    ?.lowercase(Locale.ROOT)
+
+                val extension = when (mime) {
+                    "image/jpeg" -> ".jpg"
+                    "image/png" -> ".png"
+                    "application/pdf" -> ".pdf"
+                    "application/msword" -> ".doc"
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> ".docx"
+                    else -> throw IllegalArgumentException("Format dokumen tidak didukung")
+                }
+
+                require(document.bytes.size in 1..(2 * 1024 * 1024))
+                val directory = File(context.cacheDir, "laravel_documents")
+                check(directory.isDirectory || directory.mkdirs())
+                val file = File.createTempFile("document_", extension, directory)
+                pendingDocument.value = file
+
+                withContext(Dispatchers.IO) {
+                    file.writeBytes(document.bytes)
+                }
+
+                if (!viewModel.isDocumentSessionCurrent(event)) {
+                    clearTemporaryDocument()
+                    return@collect
+                }
+
+                val uri = FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", file
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mime)
+                    clipData = ClipData.newRawUri("Dokumen SIAPEL", uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                documentLauncher.launch(intent)
+            } catch (e: CancellationException) {
+                clearTemporaryDocument()
+                throw e
+            } catch (_: Exception) {
+                clearTemporaryDocument()
+                Toast.makeText(
+                    context, "Gagal membuka dokumen. Pastikan aplikasi pembaca tersedia.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.operationError.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -84,7 +216,7 @@ fun StatusDetailScreen(
             text = { Text("Apakah Anda yakin ingin menghapus data pengajuan ini? Tindakan ini tidak dapat dibatalkan.", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             confirmButton = {
                 TextButton(
-                    enabled = !isDeleting,
+                    enabled = actionsEnabled && app != null,
                     onClick = {
                         showDeleteDialog = false
                         app?.let { viewModel.deleteApplication(it) }
@@ -112,13 +244,13 @@ fun StatusDetailScreen(
             TopAppBar(
                 title = { Text("Detail Pengajuan", color = MaterialTheme.colorScheme.onSecondary, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = onNavigateBack, enabled = !isDeleting && !previewBusy) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondary)
                     }
                 },
                 actions = {
                     if (app != null && (app.status == ApplicationStatus.SUBMITTED || app.status == ApplicationStatus.NEED_REVISION)) {
-                        IconButton(onClick = {
+                        IconButton(enabled = actionsEnabled, onClick = {
                             val route = when (app.serviceType.uppercase()) {
                                 "KIA" -> "kia?applicationId=${app.id}"
                                 "KTP" -> "ktp?applicationId=${app.id}"
@@ -132,8 +264,10 @@ fun StatusDetailScreen(
                             Icon(Icons.Default.Edit, contentDescription = "Edit Pengajuan", tint = MaterialTheme.colorScheme.onSecondary)
                         }
                     }
-                    IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Hapus", tint = MaterialTheme.colorScheme.onSecondary)
+                    if (app != null) {
+                        IconButton(enabled = actionsEnabled, onClick = { showDeleteDialog = true }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Hapus", tint = MaterialTheme.colorScheme.onSecondary)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondary)
@@ -148,7 +282,15 @@ fun StatusDetailScreen(
                     .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center
             ) {
-                Text("Permohonan tidak ditemukan")
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (detailLoading) {
+                        CircularProgressIndicator()
+                        Text("Memuat detail pengajuan...")
+                    } else {
+                        Text(if (detailError) "Detail pengajuan belum dapat dimuat" else "Permohonan tidak tersedia di cache")
+                        TextButton(onClick = { refreshRequest++ }) { Text("Muat ulang") }
+                    }
+                }
             }
         } else {
             val application = app
@@ -165,6 +307,19 @@ fun StatusDetailScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (detailLoading || detailError || isDeleting) {
+                    item {
+                        Column {
+                            if (detailLoading || isDeleting) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                Text(if (isDeleting) "Menghapus pengajuan..." else "Memperbarui detail pengajuan...")
+                            } else {
+                                Text("Detail belum berhasil diperbarui. Data yang ditampilkan berasal dari cache.")
+                                TextButton(onClick = { refreshRequest++ }) { Text("Muat ulang") }
+                            }
+                        }
+                    }
+                }
                 // Info Card
                 item {
                     Card(
@@ -283,10 +438,10 @@ fun StatusDetailScreen(
                                                             )
                                                         }
                                                     },
-                                                    enabled = !documentViewLoading,
+                                                    enabled = actionsEnabled,
                                                     modifier = Modifier.size(36.dp)
                                                 ) {
-                                                    if (documentViewLoading) {
+                                                    if (previewBusy) {
                                                         CircularProgressIndicator(
                                                             modifier = Modifier.size(16.dp),
                                                             strokeWidth = 2.dp,
@@ -349,6 +504,7 @@ fun StatusDetailScreen(
                                 Text(text = application.note ?: "", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp)
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Button(
+                                    enabled = actionsEnabled,
                                     onClick = {
                                         val route = when (application.serviceType.uppercase()) {
                                             "KIA" -> "kia?applicationId=${application.id}"

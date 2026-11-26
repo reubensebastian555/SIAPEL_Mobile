@@ -1,102 +1,146 @@
 package com.example.siapel.viewmodel
 
 import android.content.Context
-import android.net.Uri
-import android.util.Log
 import android.util.Patterns
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.siapel.data.datastore.UserPreferencesRepository
 import com.example.siapel.data.local.entity.ApplicationEntity
-import com.example.siapel.data.repository.ApplicationRepository
-import com.example.siapel.data.repository.AuthRepository
+import com.example.siapel.data.datastore.UserPreferencesRepository
+import com.example.siapel.data.repository.*
+import com.example.siapel.data.remote.laravel.dto.LaravelKkApplicationRequest
+import com.example.siapel.data.remote.laravel.dto.LaravelKkDetailRequest
 import com.example.siapel.model.ApplicationStatus
 import com.example.siapel.model.KkFormState
 import com.example.siapel.model.SelectedDocument
 import com.example.siapel.model.SubmitState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.*
-
-private fun isSelectedDocChanged(selected: SelectedDocument?, oldUriStr: String?): Boolean {
-    val newUriStr = selected?.uri?.toString()
-    return !newUriStr.isNullOrBlank() && newUriStr != oldUriStr
-}
 
 class KkViewModel(
-    private val applicationRepository: ApplicationRepository,
+    private val applicationRepository: LaravelApplicationRepository,
     private val userPreferencesRepository: UserPreferencesRepository,
-    private val authRepository: AuthRepository
+    private val authRepository: LaravelAuthRepository
 ) : ViewModel() {
     private val _uiState = mutableStateOf(KkFormState())
     val uiState: State<KkFormState> = _uiState
-
     private val _isEditMode = mutableStateOf(false)
     val isEditMode: State<Boolean> = _isEditMode
-
-    private var isEditInitialized = false
-    private var editingApplicationId: Int? = null
-    private var originalUserId: Int = 0
-    private var originalSubmissionCode: String = ""
-    private var originalSubmissionDate: String = ""
-    private var originalCreatedAt: Long = System.currentTimeMillis()
-
     private val _submissionResult = MutableSharedFlow<Boolean>()
-    val submissionResult: SharedFlow<Boolean> = _submissionResult
-
+    val submissionResult: SharedFlow<Boolean> = _submissionResult.asSharedFlow()
     private val _submitState = mutableStateOf(SubmitState.IDLE)
     val submitState: State<SubmitState> = _submitState
+    private val _operationError = MutableStateFlow<String?>(null)
+    val operationError = _operationError.asStateFlow()
+    private var isEditInitialized = false
+    private var editingApplication: ApplicationEntity? = null
+    private var formSession: VerifiedLaravelSession? = null
+    private var loadJob: Job? = null
+    private var loadGeneration = 0L
+    private var submitJob: Job? = null
+    private var reconciliationRequired by mutableStateOf(false)
+    private var sessionInvalidated by mutableStateOf(false)
+    private val _isEditLoading = mutableStateOf(false)
+    val isEditLoading: State<Boolean> = _isEditLoading
+    private var editReady by mutableStateOf(true)
+    val canSubmit: Boolean
+        get() = !sessionInvalidated && !reconciliationRequired &&
+                !_isEditLoading.value && editReady && _submitState.value == SubmitState.IDLE
+    private fun canChangeForm(): Boolean = canSubmit && submitJob?.isActive != true
+    private val touchedSlots = mutableSetOf<String>()
 
     init {
         viewModelScope.launch {
-            val session = userPreferencesRepository.userSessionFlow.first()
-            if (isEditInitialized) return@launch
-            if (session.isLoggedIn) {
-                val user = authRepository.getUserById(session.userId)
-                if (isEditInitialized) return@launch
-                if (user != null) {
-                    _uiState.value = _uiState.value.copy(
-                        email = user.email,
-                        whatsapp = user.whatsapp
-                    )
+            val session = authRepository.getVerifiedLaravelSession() ?: return@launch
+            val user = authRepository.getVerifiedSessionContract() ?: return@launch
+            if (!isEditInitialized && user.id == session.localUserId &&
+                user.remoteUserUuid == session.remoteUserUuid &&
+                authRepository.isVerifiedSessionCurrent(session)) {
+                formSession = session
+                _uiState.value = _uiState.value.copy(
+                    email = user.email, whatsapp = user.whatsapp
+                )
+            }
+        }
+        viewModelScope.launch {
+            userPreferencesRepository.userSessionFlow.collect { stored ->
+                val bound = formSession ?: return@collect
+                if (!stored.isLoggedIn || stored.generation != bound.generation ||
+                    stored.userId != bound.localUserId || stored.remoteUserUuid != bound.remoteUserUuid ||
+                    stored.token != bound.token) {
+                    sessionInvalidated = true
+                    _isEditLoading.value = false
+                    editReady = false
+                    loadJob?.cancel()
+                    submitJob?.cancel()
+                    editingApplication = null
+                    _uiState.value = KkFormState()
+                    _isEditMode.value = false
+                    _submitState.value = SubmitState.IDLE
+                    _operationError.value = "Sesi berubah. Buka kembali formulir."
                 }
             }
         }
     }
 
-    private fun uriToSelectedDoc(uriStr: String?): SelectedDocument? {
-        return uriStr?.let {
-            try {
-                val uri = Uri.parse(it)
-                SelectedDocument(uri, uri.lastPathSegment ?: "Dokumen")
-            } catch (e: Exception) {
-                null
-            }
+    // Server paths are metadata, not readable Android URIs.
+    private fun existingDocument(path: String?): SelectedDocument? =
+        path?.takeIf { it.isNotBlank() }?.let {
+            SelectedDocument(uri = null, displayName = "Dokumen tersimpan")
         }
+
+    private suspend fun requireSession(): VerifiedLaravelSession {
+        check(!sessionInvalidated) { "Sesi berubah" }
+        val current = requireNotNull(authRepository.getVerifiedLaravelSession())
+        check(formSession == null || formSession == current) { "Sesi berubah" }
+        formSession = current
+        check(authRepository.isVerifiedSessionCurrent(current))
+        return current
+    }
+
+    private suspend fun findOwnedApplication(id: Int, session: VerifiedLaravelSession): ApplicationEntity {
+        val app = requireNotNull(applicationRepository.observeCachedApplications(session).first()
+            .firstOrNull { it.id == id && it.serviceType.equals("KK", true) })
+        check(app.userId == session.localUserId && app.remoteUserUuid == session.remoteUserUuid)
+        check(!app.remoteUuid.isNullOrBlank())
+        return app
+    }
+
+    private fun requireEditable(app: ApplicationEntity) {
+        check(app.status == ApplicationStatus.SUBMITTED || app.status == ApplicationStatus.NEED_REVISION)
     }
 
     fun loadApplication(id: Int) {
+        if (submitJob?.isActive == true || reconciliationRequired || sessionInvalidated) return
         isEditInitialized = true
-        viewModelScope.launch {
-            val app = applicationRepository.getApplicationById(id)
-            if (app != null) {
-                if (app.status == ApplicationStatus.PROCESSING || app.status == ApplicationStatus.COMPLETED) {
-                    return@launch
-                }
-                editingApplicationId = id
-                originalUserId = app.userId
-                originalSubmissionCode = app.submissionCode
-                originalSubmissionDate = app.submissionDate
-                originalCreatedAt = app.createdAt
-                _isEditMode.value = true
-
-                _uiState.value = _uiState.value.copy(
+        _isEditMode.value = true
+        editingApplication = null
+        editReady = false
+        touchedSlots.clear()
+        _isEditLoading.value = true
+        _operationError.value = null
+        val generation = ++loadGeneration
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            try {
+                val session = requireSession()
+                val cached = findOwnedApplication(id, session)
+                applicationRepository.getApplicationDetail(
+                    applicationUuid = requireNotNull(cached.remoteUuid),
+                    localUserId = session.localUserId, remoteUserUuid = session.remoteUserUuid,
+                    token = session.token
+                ).getOrThrow()
+                val app = findOwnedApplication(id, session)
+                requireEditable(app)
+                check(authRepository.isVerifiedSessionCurrent(session))
+                editingApplication = app
+                _uiState.value = KkFormState(
                     kategoriProduk = app.category,
                     kecamatan = app.kecamatan,
                     kelurahan = app.kelurahan,
@@ -108,27 +152,39 @@ class KkViewModel(
                     nikAnak = app.nikAnak ?: "",
                     namaAnak = app.namaAnak ?: "",
                     nomorKk = app.nomorKk ?: "",
-                    docKkTerbaru = uriToSelectedDoc(app.doc1),
-                    docF101 = uriToSelectedDoc(app.doc2),
-                    docF102 = uriToSelectedDoc(app.doc3),
-                    docF103 = uriToSelectedDoc(app.doc4),
-                    docF106 = uriToSelectedDoc(app.doc5),
-                    docSptjm = uriToSelectedDoc(app.doc6),
-                    docSuratPernyataanTempatTinggal = uriToSelectedDoc(app.doc7),
-                    docSuratKehilanganKkRusak = uriToSelectedDoc(app.doc8),
-                    docKtpHilangRusak = uriToSelectedDoc(app.doc9),
-                    docPendukung = uriToSelectedDoc(app.doc10),
-                    docSelfie = uriToSelectedDoc(app.docSelfie)
+                    docKkTerbaru = existingDocument(app.doc1),
+                    docF101 = existingDocument(app.doc2),
+                    docF102 = existingDocument(app.doc3),
+                    docF103 = existingDocument(app.doc4),
+                    docF106 = existingDocument(app.doc5),
+                    docSptjm = existingDocument(app.doc6),
+                    docSuratPernyataanTempatTinggal = existingDocument(app.doc7),
+                    docSuratKehilanganKkRusak = existingDocument(app.doc8),
+                    docKtpHilangRusak = existingDocument(app.doc9),
+                    docPendukung = existingDocument(app.doc10),
+                    docSelfie = existingDocument(app.docSelfie)
                 )
+                editReady = true
+                _operationError.value = null
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                if (!sessionInvalidated && generation == loadGeneration) {
+                    _operationError.value = "Pengajuan tidak dapat dimuat atau tidak dapat diedit. Buka kembali formulir."
+                    _uiState.value = KkFormState()
+                }
+            } finally {
+                if (generation == loadGeneration) _isEditLoading.value = false
             }
         }
     }
 
     fun onKategoriProdukChange(value: String) {
+        if (!canChangeForm()) return
         _uiState.value = _uiState.value.copy(kategoriProduk = value, kategoriError = null)
     }
 
     fun onKecamatanChange(value: String) {
+        if (!canChangeForm()) return
         _uiState.value = _uiState.value.copy(
             kecamatan = value,
             kelurahan = "",
@@ -138,89 +194,120 @@ class KkViewModel(
     }
 
     fun onKelurahanChange(value: String) {
+        if (!canChangeForm()) return
         _uiState.value = _uiState.value.copy(kelurahan = value, kelurahanError = null)
     }
 
     fun onEmailChange(value: String) {
+        if (!canChangeForm()) return
         _uiState.value = _uiState.value.copy(email = value, emailError = null)
     }
 
     fun onWhatsappChange(value: String) {
+        if (!canChangeForm()) return
         val filtered = value.filter { it.isDigit() }
         _uiState.value = _uiState.value.copy(whatsapp = filtered, whatsappError = null)
     }
 
     fun onKeteranganChange(value: String) {
+        if (!canChangeForm()) return
         _uiState.value = _uiState.value.copy(keterangan = value)
     }
 
     fun onNikPelaporChange(value: String) {
+        if (!canChangeForm()) return
         val filtered = value.filter { it.isDigit() }.take(16)
         _uiState.value = _uiState.value.copy(nikPelapor = filtered, nikPelaporError = null)
     }
 
     fun onNamaPelaporChange(value: String) {
+        if (!canChangeForm()) return
         val filtered = value.filter { it.isLetter() || it.isWhitespace() || it == '\'' || it == '-' }.take(60)
         _uiState.value = _uiState.value.copy(namaPelapor = filtered, namaPelaporError = null)
     }
 
     fun onNikAnakChange(value: String) {
+        if (!canChangeForm()) return
         val filtered = value.filter { it.isDigit() }.take(16)
         _uiState.value = _uiState.value.copy(nikAnak = filtered, nikAnakError = null)
     }
 
     fun onNamaAnakChange(value: String) {
+        if (!canChangeForm()) return
         val filtered = value.filter { it.isLetter() || it.isWhitespace() || it == '\'' || it == '-' }.take(60)
         _uiState.value = _uiState.value.copy(namaAnak = filtered, namaAnakError = null)
     }
 
     fun onNomorKkChange(value: String) {
+        if (!canChangeForm()) return
         val filtered = value.filter { it.isDigit() }.take(16)
         _uiState.value = _uiState.value.copy(nomorKk = filtered, nomorKkError = null)
     }
 
     // Document Picker setters
     fun onDocKkTerbaruChange(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc1")
         _uiState.value = _uiState.value.copy(docKkTerbaru = doc)
     }
 
     fun onDocF101Change(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc2")
         _uiState.value = _uiState.value.copy(docF101 = doc)
     }
 
     fun onDocF102Change(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc3")
         _uiState.value = _uiState.value.copy(docF102 = doc)
     }
 
     fun onDocF103Change(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc4")
         _uiState.value = _uiState.value.copy(docF103 = doc)
     }
 
     fun onDocF106Change(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc5")
         _uiState.value = _uiState.value.copy(docF106 = doc)
     }
 
     fun onDocSptjmChange(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc6")
         _uiState.value = _uiState.value.copy(docSptjm = doc)
     }
 
     fun onDocSuratPernyataanTempatTinggalChange(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc7")
         _uiState.value = _uiState.value.copy(docSuratPernyataanTempatTinggal = doc)
     }
 
     fun onDocSuratKehilanganKkRusakChange(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc8")
         _uiState.value = _uiState.value.copy(docSuratKehilanganKkRusak = doc)
     }
 
     fun onDocKtpHilangRusakChange(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc9")
         _uiState.value = _uiState.value.copy(docKtpHilangRusak = doc)
     }
 
     fun onDocPendukungChange(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("doc10")
         _uiState.value = _uiState.value.copy(docPendukung = doc)
     }
 
     fun onDocSelfieChange(doc: SelectedDocument?) {
+        if (!canChangeForm()) return
+        touchedSlots.add("docSelfie")
         _uiState.value = _uiState.value.copy(docSelfie = doc)
     }
 
@@ -280,196 +367,125 @@ class KkViewModel(
                 namaPelaporError == null && nikAnakError == null && namaAnakError == null && nomorKkError == null
     }
 
+    private fun documents(state: KkFormState): Map<String, SelectedDocument?> {
+        return linkedMapOf(
+            "doc1" to state.docKkTerbaru,
+            "doc2" to state.docF101,
+            "doc3" to state.docF102,
+            "doc4" to state.docF103,
+            "doc5" to state.docF106,
+            "doc6" to state.docSptjm,
+            "doc7" to state.docSuratPernyataanTempatTinggal,
+            "doc8" to state.docSuratKehilanganKkRusak,
+            "doc9" to state.docKtpHilangRusak,
+            "doc10" to state.docPendukung,
+            "docSelfie" to state.docSelfie
+        )
+    }
+
     fun submitForm(context: Context) {
-        if (validate()) {
-            _submitState.value = SubmitState.LOADING
-            viewModelScope.launch {
-                try {
-                    val editId = editingApplicationId
-                    if (editId != null) {
-                        val existing = applicationRepository.getApplicationById(editId)
-                        if (existing == null || existing.status == ApplicationStatus.PROCESSING || existing.status == ApplicationStatus.COMPLETED) {
-                            _submitState.value = SubmitState.ERROR
-                            delay(1000)
-                            _submitState.value = SubmitState.IDLE
-                            _submissionResult.emit(false)
-                            return@launch
-                        }
-
-                        val state = _uiState.value
-
-                        val doc1Changed = isSelectedDocChanged(state.docKkTerbaru, existing.doc1)
-                        val doc2Changed = isSelectedDocChanged(state.docF101, existing.doc2)
-                        val doc3Changed = isSelectedDocChanged(state.docF102, existing.doc3)
-                        val doc4Changed = isSelectedDocChanged(state.docF103, existing.doc4)
-                        val doc5Changed = isSelectedDocChanged(state.docF106, existing.doc5)
-                        val doc6Changed = isSelectedDocChanged(state.docSptjm, existing.doc6)
-                        val doc7Changed = isSelectedDocChanged(state.docSuratPernyataanTempatTinggal, existing.doc7)
-                        val doc8Changed = isSelectedDocChanged(state.docSuratKehilanganKkRusak, existing.doc8)
-                        val doc9Changed = isSelectedDocChanged(state.docKtpHilangRusak, existing.doc9)
-                        val doc10Changed = isSelectedDocChanged(state.docPendukung, existing.doc10)
-                        val docSelfieChanged = isSelectedDocChanged(state.docSelfie, existing.docSelfie)
-
-                        val updatedApp = ApplicationEntity(
-                            id = editId,
-                            userId = originalUserId,
-                            serviceType = "KK",
-                            category = state.kategoriProduk,
-                            submissionCode = originalSubmissionCode,
-                            submissionDate = originalSubmissionDate,
-                            status = ApplicationStatus.SUBMITTED,
-                            kecamatan = state.kecamatan,
-                            kelurahan = state.kelurahan,
-                            email = state.email,
-                            whatsapp = state.whatsapp,
-                            keterangan = state.keterangan,
-                            nikPelapor = state.nikPelapor,
-                            namaPelapor = state.namaPelapor,
-                            nikAnak = state.nikAnak,
-                            namaAnak = state.namaAnak,
-                            nomorKk = state.nomorKk,
-                            doc1 = if (doc1Changed) state.docKkTerbaru?.uri?.toString() else existing.doc1,
-                            doc2 = if (doc2Changed) state.docF101?.uri?.toString() else existing.doc2,
-                            doc3 = if (doc3Changed) state.docF102?.uri?.toString() else existing.doc3,
-                            doc4 = if (doc4Changed) state.docF103?.uri?.toString() else existing.doc4,
-                            doc5 = if (doc5Changed) state.docF106?.uri?.toString() else existing.doc5,
-                            doc6 = if (doc6Changed) state.docSptjm?.uri?.toString() else existing.doc6,
-                            doc7 = if (doc7Changed) state.docSuratPernyataanTempatTinggal?.uri?.toString() else existing.doc7,
-                            doc8 = if (doc8Changed) state.docSuratKehilanganKkRusak?.uri?.toString() else existing.doc8,
-                            doc9 = if (doc9Changed) state.docKtpHilangRusak?.uri?.toString() else existing.doc9,
-                            doc10 = if (doc10Changed) state.docPendukung?.uri?.toString() else existing.doc10,
-                            docSelfie = if (docSelfieChanged) state.docSelfie?.uri?.toString() else existing.docSelfie,
-                            createdAt = originalCreatedAt
-                        )
-
-                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
-                            ?: authRepository.getCurrentSupabaseSessionUserId()
-
-                        if (!currentUuid.isNullOrEmpty()) {
-                            val isRemoteUpdateSuccess = applicationRepository.updateKkApplicationRemoteWithDocuments(
-                                context = context,
-                                application = updatedApp,
-                                currentUuid = currentUuid,
-                                newDoc1 = if (doc1Changed) state.docKkTerbaru else null,
-                                newDoc2 = if (doc2Changed) state.docF101 else null,
-                                newDoc3 = if (doc3Changed) state.docF102 else null,
-                                newDoc4 = if (doc4Changed) state.docF103 else null,
-                                newDoc5 = if (doc5Changed) state.docF106 else null,
-                                newDoc6 = if (doc6Changed) state.docSptjm else null,
-                                newDoc7 = if (doc7Changed) state.docSuratPernyataanTempatTinggal else null,
-                                newDoc8 = if (doc8Changed) state.docSuratKehilanganKkRusak else null,
-                                newDoc9 = if (doc9Changed) state.docKtpHilangRusak else null,
-                                newDoc10 = if (doc10Changed) state.docPendukung else null,
-                                newDocSelfie = if (docSelfieChanged) state.docSelfie else null
-                            )
-
-                            if (isRemoteUpdateSuccess) {
-                                _submitState.value = SubmitState.SUCCESS
-                                delay(800)
-                                _submissionResult.emit(true)
-                            } else {
-                                Log.e("SIAPEL_EDIT_KK", "KK remote update failed for code ${updatedApp.submissionCode}. Room update skipped.")
-                                _submitState.value = SubmitState.ERROR
-                                delay(1000)
-                                _submitState.value = SubmitState.IDLE
-                                _submissionResult.emit(false)
-                            }
-                        } else {
-                            applicationRepository.updateApplication(updatedApp)
-                            _submitState.value = SubmitState.SUCCESS
-                            delay(800)
-                            _submissionResult.emit(true)
-                        }
-                    } else {
-                        val userSession = userPreferencesRepository.userSessionFlow.first()
-                        val currentUuid = authRepository.getCurrentSupabaseUser()?.id
-                            ?: authRepository.getCurrentSupabaseSessionUserId()
-
-                        if (userSession.isLoggedIn) {
-                            val state = _uiState.value
-                            val submissionCode = "KK-${System.currentTimeMillis().toString().takeLast(6)}"
-                            val currentDate = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()).format(Date())
-
-                            val application = ApplicationEntity(
-                                userId = userSession.userId,
-                                serviceType = "KK",
-                                category = state.kategoriProduk,
-                                submissionCode = submissionCode,
-                                submissionDate = currentDate,
-                                status = ApplicationStatus.SUBMITTED,
-                                kecamatan = state.kecamatan,
-                                kelurahan = state.kelurahan,
-                                email = state.email,
-                                whatsapp = state.whatsapp,
-                                keterangan = state.keterangan,
-                                nikPelapor = state.nikPelapor,
-                                namaPelapor = state.namaPelapor,
-                                nikAnak = state.nikAnak,
-                                namaAnak = state.namaAnak,
-                                nomorKk = state.nomorKk,
-                                doc1 = state.docKkTerbaru?.uri?.toString(),
-                                doc2 = state.docF101?.uri?.toString(),
-                                doc3 = state.docF102?.uri?.toString(),
-                                doc4 = state.docF103?.uri?.toString(),
-                                doc5 = state.docF106?.uri?.toString(),
-                                doc6 = state.docSptjm?.uri?.toString(),
-                                doc7 = state.docSuratPernyataanTempatTinggal?.uri?.toString(),
-                                doc8 = state.docSuratKehilanganKkRusak?.uri?.toString(),
-                                doc9 = state.docKtpHilangRusak?.uri?.toString(),
-                                doc10 = state.docPendukung?.uri?.toString(),
-                                docSelfie = state.docSelfie?.uri?.toString()
-                            )
-
-                            if (!currentUuid.isNullOrEmpty()) {
-                                val remoteSuccess = applicationRepository.createKkApplicationRemote(
-                                    context = context,
-                                    application = application,
-                                    currentSupabaseUuid = currentUuid,
-                                    doc1 = state.docKkTerbaru,
-                                    doc2 = state.docF101,
-                                    doc3 = state.docF102,
-                                    doc4 = state.docF103,
-                                    doc5 = state.docF106,
-                                    doc6 = state.docSptjm,
-                                    doc7 = state.docSuratPernyataanTempatTinggal,
-                                    doc8 = state.docSuratKehilanganKkRusak,
-                                    doc9 = state.docKtpHilangRusak,
-                                    doc10 = state.docPendukung,
-                                    docSelfie = state.docSelfie
-                                )
-
-                                if (remoteSuccess) {
-                                    _submitState.value = SubmitState.SUCCESS
-                                    delay(800)
-                                    _submissionResult.emit(true)
-                                } else {
-                                    Log.e("SIAPEL_STORAGE", "KK remote create failed. Local Room fallback skipped.")
-                                    _submitState.value = SubmitState.ERROR
-                                    delay(1000)
-                                    _submitState.value = SubmitState.IDLE
-                                    _submissionResult.emit(false)
-                                }
-                            } else {
-                                applicationRepository.insertApplication(application)
-                                _submitState.value = SubmitState.SUCCESS
-                                delay(800)
-                                _submissionResult.emit(true)
-                            }
-                        } else {
-                            _submitState.value = SubmitState.ERROR
-                            delay(1000)
-                            _submitState.value = SubmitState.IDLE
-                            _submissionResult.emit(false)
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("SIAPEL_STORAGE", "KK submitForm exception: ${e.message}", e)
-                    _submitState.value = SubmitState.ERROR
-                    delay(1000)
-                    _submitState.value = SubmitState.IDLE
-                    _submissionResult.emit(false)
+        if (!canSubmit || submitJob?.isActive == true || loadJob?.isActive == true) return
+        if (sessionInvalidated || reconciliationRequired ||
+            (isEditInitialized && editingApplication == null)) {
+            _operationError.value = "Periksa status pengajuan sebelum melanjutkan."
+            viewModelScope.launch { _submissionResult.emit(false) }
+            return
+        }
+        if (!validate()) return
+        val state = _uiState.value
+        _operationError.value = null
+        _submitState.value = SubmitState.LOADING
+        submitJob = viewModelScope.launch {
+            var session: VerifiedLaravelSession? = null
+            try {
+                val active = requireSession()
+                session = active
+                val request = LaravelKkApplicationRequest(
+                    category = state.kategoriProduk,
+                    nikPelapor = state.nikPelapor, namaPelapor = state.namaPelapor,
+                    email = state.email, whatsapp = state.whatsapp,
+                    kecamatan = state.kecamatan, kelurahan = state.kelurahan,
+                    keterangan = state.keterangan,
+                    detail = LaravelKkDetailRequest(
+                        nikAnak = state.nikAnak.ifBlank { null },
+                        namaAnak = state.namaAnak.ifBlank { null },
+                        nomorKk = state.nomorKk.ifBlank { null }
+                    )
+                )
+                val candidates = documents(state)
+                val replacements = candidates.filterValues { it?.uri != null }
+                val existing = editingApplication
+                val success = if (existing != null) {
+                    val cached = findOwnedApplication(existing.id, active)
+                    check(cached.remoteUuid == existing.remoteUuid)
+                    requireEditable(cached)
+                    val oldPaths = mapOf(
+                        "doc1" to cached.doc1,
+                        "doc2" to cached.doc2,
+                        "doc3" to cached.doc3,
+                        "doc4" to cached.doc4,
+                        "doc5" to cached.doc5,
+                        "doc6" to cached.doc6,
+                        "doc7" to cached.doc7,
+                        "doc8" to cached.doc8,
+                        "doc9" to cached.doc9,
+                        "doc10" to cached.doc10,
+                        "docSelfie" to cached.docSelfie
+                    )
+                    val deleted = oldPaths.filter { (slot, path) ->
+                        slot in touchedSlots && !path.isNullOrBlank() && candidates[slot] == null
+                    }.keys.toList()
+                    val result = applicationRepository.updateKkApplicationWithDocuments(
+                        context = context.applicationContext,
+                        applicationUuid = requireNotNull(cached.remoteUuid), request = request,
+                        replacementDocuments = replacements, deletedSlots = deleted,
+                        localUserId = active.localUserId, remoteUserUuid = active.remoteUserUuid,
+                        token = active.token
+                    ).getOrThrow()
+                    reconciliationRequired = !result.isFullySuccessful &&
+                            (result.isFormUpdated || result.remoteOutcome == LaravelRemoteOutcome.UNCERTAIN ||
+                                    result.uncertainSlots.isNotEmpty())
+                    result.isFullySuccessful
+                } else {
+                    check(candidates.values.none { it != null && it.uri == null })
+                    val result = applicationRepository.createKkApplicationWithDocuments(
+                        context = context.applicationContext, request = request, documents = replacements,
+                        localUserId = active.localUserId, remoteUserUuid = active.remoteUserUuid,
+                        token = active.token
+                    ).getOrThrow()
+                    reconciliationRequired = !result.isFullySuccessful &&
+                            (result.applicationUuid != null || result.remoteOutcome == LaravelRemoteOutcome.UNCERTAIN ||
+                                    result.uncertainSlots.isNotEmpty())
+                    result.isFullySuccessful
                 }
+                check(authRepository.isVerifiedSessionCurrent(active))
+                if (success) {
+                    _submitState.value = SubmitState.SUCCESS
+                    delay(800)
+                    if (authRepository.isVerifiedSessionCurrent(active)) _submissionResult.emit(true)
+                } else {
+                    reportFailure(active)
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (e is LaravelMutationUncertainException) reconciliationRequired = true
+                reportFailure(session)
+            } finally {
+                if (_submitState.value == SubmitState.LOADING) _submitState.value = SubmitState.IDLE
             }
+        }
+    }
+
+    private suspend fun reportFailure(session: VerifiedLaravelSession?) {
+        if (sessionInvalidated || (session != null && !authRepository.isVerifiedSessionCurrent(session))) return
+        _operationError.value = if (reconciliationRequired)
+            "Pengajuan mungkin telah tersimpan. Periksa status sebelum mengirim ulang."
+        else "Pengajuan belum berhasil diproses."
+        _submitState.value = SubmitState.ERROR
+        delay(1000)
+        _submitState.value = SubmitState.IDLE
+        if (!sessionInvalidated && (session == null || authRepository.isVerifiedSessionCurrent(session))) {
+            _submissionResult.emit(false)
         }
     }
 }

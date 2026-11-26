@@ -6,30 +6,44 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.remember
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.siapel.navigation.AppNavigation
 import com.example.siapel.ui.theme.SIAPELTheme
 import com.example.siapel.viewmodel.ProfileViewModel
 import com.example.siapel.viewmodel.ViewModelFactory
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         enableEdgeToEdge()
+
         setContent {
-            val application = applicationContext as SiapelApplication
-            val factory = remember {
+
+            val application =
+                applicationContext as SiapelApplication
+
+            val factory = remember(application) {
                 ViewModelFactory(
-                    authRepository = application.authRepository,
-                    userPreferencesRepository = application.userPreferencesRepository
+                    userPreferencesRepository =
+                        application.userPreferencesRepository,
+                    laravelAuthRepository =
+                        application.laravelAuthRepository
                 )
             }
-            val profileViewModel: ProfileViewModel = viewModel(factory = factory)
-            val isDarkMode by profileViewModel.isDarkMode.collectAsState()
-            
+
+            val profileViewModel: ProfileViewModel =
+                viewModel(factory = factory)
+
+            val isDarkMode by
+            profileViewModel.isDarkMode.collectAsState()
+
             SIAPELTheme(darkTheme = isDarkMode) {
-                AppNavigation(profileViewModel = profileViewModel)
+                AppNavigation(
+                    profileViewModel = profileViewModel
+                )
             }
         }
     }

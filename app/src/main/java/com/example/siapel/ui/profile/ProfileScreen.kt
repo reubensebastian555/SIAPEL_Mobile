@@ -1,5 +1,6 @@
 package com.example.siapel.ui.profile
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
@@ -58,27 +59,53 @@ fun ProfileScreen(
     val user by viewModel.userProfile.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isDarkMode by viewModel.isDarkMode.collectAsState()
+    val isLoggingOut by viewModel.isLoggingOut.collectAsState()
+    val logoutError by viewModel.logoutError.collectAsState()
     var showLogoutDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = isLoggingOut) { }
 
     LaunchedEffect(Unit) {
         viewModel.loadUserProfile()
     }
 
-    if (showLogoutDialog) {
+    if (showLogoutDialog || isLoggingOut) {
         AlertDialog(
-            onDismissRequest = { showLogoutDialog = false },
+            onDismissRequest = { if (!isLoggingOut) showLogoutDialog = false },
             title = { Text("Keluar dari akun?", color = MaterialTheme.colorScheme.onSurface) },
-            text = { Text("Apakah Anda yakin ingin keluar dari aplikasi SIAPEL?", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            text = {
+                Column {
+                    Text("Apakah Anda yakin ingin keluar dari aplikasi SIAPEL?", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (isLoggingOut) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    } else if (logoutError != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Gagal keluar dari akun. Silakan coba kembali.",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    showLogoutDialog = false
-                    onLogout()
-                }) {
-                    Text("Keluar", color = MaterialTheme.colorScheme.error)
+                TextButton(
+                    enabled = !isLoggingOut,
+                    onClick = {
+                        viewModel.logout {
+                            showLogoutDialog = false
+                            onLogout()
+                        }
+                    }
+                ) {
+                    Text(
+                        if (isLoggingOut) "Memproses..." else "Keluar",
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showLogoutDialog = false }) {
+                TextButton(enabled = !isLoggingOut, onClick = { showLogoutDialog = false }) {
                     Text("Batal", color = MaterialTheme.colorScheme.primary)
                 }
             },
@@ -98,7 +125,7 @@ fun ProfileScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            item { 
+            item {
                 user?.let { ProfileHeader(it) } ?: Box(
                     modifier = Modifier.fillMaxWidth().height(200.dp),
                     contentAlignment = Alignment.Center
@@ -156,7 +183,11 @@ fun ProfileScreen(
             item { Spacer(modifier = Modifier.height(32.dp)) }
             item {
                 OutlinedButton(
-                    onClick = { showLogoutDialog = true },
+                    onClick = {
+                        viewModel.clearLogoutError()
+                        showLogoutDialog = true
+                    },
+                    enabled = !isLoggingOut,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp),
